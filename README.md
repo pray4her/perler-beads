@@ -4,14 +4,9 @@
 
 ### 任意图片 → 拼豆底稿，一键生成
 
-[![Mobile](https://img.shields.io/badge/移动端-perlerbeadsold.zippland.com-ff69b4?style=for-the-badge)](https://perlerbeadsold.zippland.com)
-[![Desktop](https://img.shields.io/badge/桌面端-perlerbeads.zippland.com-8b5cf6?style=for-the-badge)](https://perlerbeads.zippland.com)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-blue?style=for-the-badge)](./LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen?style=for-the-badge)](https://github.com/Zippland/perler-beads/pulls)
 
 开源的智能拼豆图纸生成器 — 自动颜色映射 · 多品牌色号适配 · 杂色清理 · 一键导出图纸与采购清单
-
-**移动端**（竖屏）：快速生成图纸，适合手机使用 · **桌面端**（横屏）：完整工作台，适合电脑精细编辑
 
 </div>
 
@@ -31,7 +26,7 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/Zippland/perler-beads.git
+git clone <repository-url>
 cd perler-beads
 npm install
 npm run dev
@@ -46,7 +41,7 @@ npm run dev
 | 框架 | Next.js (React) + TypeScript |
 | 样式 | Tailwind CSS |
 | 图像处理 | Canvas API（浏览器端） |
-| 部署 | Vercel |
+| 部署 | Cloudflare Pages / 任意静态托管 |
 
 ## 核心算法
 
@@ -90,7 +85,7 @@ npm run dev
 
 ## 共创声明
 
-本项目永久开源，由维护者无偿运营 [perlerbeadsold.zippland.com](https://perlerbeadsold.zippland.com) 供所有拼豆爱好者免费使用。
+本项目永久开源，供所有拼豆爱好者免费使用。
 
 我们公开全部算法细节和源代码，目的是推动拼豆工具生态的共同进步。欢迎所有人学习、使用、改进。
 
@@ -98,4 +93,4 @@ npm run dev
 
 ## 许可证
 
-[AGPL-3.0](./LICENSE) &copy; [Zippland](https://github.com/Zippland)
+[AGPL-3.0](./LICENSE)

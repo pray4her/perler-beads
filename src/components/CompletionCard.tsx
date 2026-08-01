@@ -249,13 +249,10 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
           ctx.shadowBlur = 8;
           ctx.fillText(`⏱️ ${formatTime(totalElapsedTime)} | 🔗 完成 ${totalBeads} 颗豆子`, cardWidth / 2, infoY + 40);
 
-          // 底部品牌信息
+          // 底部产品信息
           ctx.font = '14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
           ctx.fillStyle = 'rgba(255,255,255,0.7)';
-          ctx.fillText('七卡瓦拼豆底稿生成器', cardWidth / 2, cardHeight - 50);
-          ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-          ctx.fillStyle = 'rgba(255,255,255,0.5)';
-          ctx.fillText('perlerbeadsold.zippland.com', cardWidth / 2, cardHeight - 25);
+          ctx.fillText('拼豆底稿生成器', cardWidth / 2, cardHeight - 35);
 
           resolve(canvas.toDataURL('image/jpeg', 0.95));
           
@@ -359,32 +356,26 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
               ctx.lineWidth = 3;
               ctx.strokeRect(thumbX - 3, thumbY - 3, thumbWidth + 6, thumbHeight + 6);
 
-              // 底部品牌信息
+              // 底部产品信息
               ctx.font = '14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
               ctx.fillStyle = 'rgba(255,255,255,0.8)';
               ctx.textAlign = 'center';
               ctx.shadowColor = 'rgba(0,0,0,0.5)';
               ctx.shadowBlur = 4;
-              ctx.fillText('七卡瓦拼豆底稿生成器', cardWidth / 2, cardHeight - 40);
-              ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-              ctx.fillStyle = 'rgba(255,255,255,0.6)';
-              ctx.fillText('perlerbeadsold.zippland.com', cardWidth / 2, cardHeight - 20);
+              ctx.fillText('拼豆底稿生成器', cardWidth / 2, cardHeight - 30);
               ctx.shadowBlur = 0;
 
               resolve(canvas.toDataURL('image/jpeg', 0.95));
             };
             thumbnailImg.src = thumbnailDataURL;
           } else {
-            // 底部品牌信息
+            // 底部产品信息
             ctx.font = '14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
             ctx.fillStyle = 'rgba(255,255,255,0.8)';
             ctx.textAlign = 'center';
             ctx.shadowColor = 'rgba(0,0,0,0.5)';
             ctx.shadowBlur = 4;
-            ctx.fillText('七卡瓦拼豆底稿生成器', cardWidth / 2, cardHeight - 40);
-            ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-            ctx.fillStyle = 'rgba(255,255,255,0.6)';
-            ctx.fillText('perlerbeadsold.zippland.com', cardWidth / 2, cardHeight - 20);
+            ctx.fillText('拼豆底稿生成器', cardWidth / 2, cardHeight - 30);
             ctx.shadowBlur = 0;
 
             resolve(canvas.toDataURL('image/jpeg', 0.95));

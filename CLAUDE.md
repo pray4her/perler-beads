@@ -1,8 +1,6 @@
 # 拼豆底稿生成器 (Perler Beads Generator)
 
-因为市面上的拼豆软件差强人意（可能是我没用到好的），所以花了大概两个小时，写了一个专门生成拼豆图纸的网站：
-
-[perlerbeadsold.zippland.com](perlerbeadsold.zippland.com)
+开源的智能拼豆图纸生成器。
 
 ❓
 想解决的（市场上拼豆软件的）问题：
@@ -25,13 +23,7 @@
 7.  导出图纸，
 8.  导出采购清单。
 
-❤️ 如果有需求可以直接提，我集成在网站里。
-
-✅
-对于商家，我把算法的改进思路放在这里，
-希望你们可以越做越好。
-如果有其他想二开的同学，可以直接在项目提交pr，
-这个思路也可以直接使用̋(ˊ•͈ꇴ•͈ˋ)
+欢迎提交需求与 PR。
 
 ### 1️⃣ 初始颜色映射
 黑色毛边是因为池化过程中对RGB 采用了 mean 操作，改为局部  max pooling ，每个单元，找到像素频率最高的 RGB 值，用欧氏距离查找最近的颜色就行
@@ -351,3 +343,17 @@ interface CanvasState {
 - **项目文件**：完整的像素画数据、编辑历史、进度信息
 - **用户设置**：色板偏好、操作习惯、界面配置
 - **缓存管理**：图像处理结果缓存、色板数据缓存
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues (via `gh`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout (`CONTEXT.md` + `docs/adr/` at repo root). See `docs/agents/domain.md`.
