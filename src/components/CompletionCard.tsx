@@ -431,15 +431,15 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
                   <div className="space-y-3">
                     <button
                       onClick={startCamera}
-                      className="w-full bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors"
+                      className="w-full bg-primary text-primary-foreground px-6 py-3 rounded-lg hover:bg-primary/80 transition-colors"
                     >
-                      📸 开启相机拍照
+                      开启相机拍照
                     </button>
                     <button
                       onClick={skipPhoto}
-                      className="w-full bg-green-500 text-white px-6 py-3 rounded-lg hover:bg-green-600 transition-colors"
+                      className="w-full border border-border bg-background text-foreground px-6 py-3 rounded-lg hover:bg-muted transition-colors"
                     >
-                      🎨 跳过拍照，使用作品图
+                      跳过拍照，使用作品图
                     </button>
                   </div>
                 </div>
@@ -453,9 +453,9 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
                   />
                   <button
                     onClick={takePhoto}
-                    className="bg-green-500 text-white px-6 py-3 rounded-lg hover:bg-green-600 transition-colors mr-2"
+                    className="bg-primary text-primary-foreground px-6 py-3 rounded-lg hover:bg-primary/80 transition-colors mr-2"
                   >
-                    📸 拍照
+                    拍照
                   </button>
                   <button
                     onClick={() => {
@@ -463,7 +463,7 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
                       stream?.getTracks().forEach(track => track.stop());
                       setIsCapturing(false);
                     }}
-                    className="bg-gray-500 text-white px-4 py-3 rounded-lg hover:bg-gray-600 transition-colors"
+                    className="border border-border bg-background text-foreground px-4 py-3 rounded-lg hover:bg-muted transition-colors"
                   >
                     取消
                   </button>
@@ -481,13 +481,13 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
               <div className="space-y-3">
                 <button
                   onClick={downloadCard}
-                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-lg hover:from-purple-600 hover:to-pink-600 transition-colors"
+                  className="w-full bg-primary text-primary-foreground py-3 rounded-lg hover:bg-primary/80 transition-colors"
                 >
-                  📥 下载打卡图
+                  下载打卡图
                 </button>
                 <button
                   onClick={() => setUserPhoto(null)}
-                  className="w-full bg-gray-500 text-white py-2 rounded-lg hover:bg-gray-600 transition-colors"
+                  className="w-full border border-border bg-background text-foreground py-2 rounded-lg hover:bg-muted transition-colors"
                 >
                   重新拍照
                 </button>

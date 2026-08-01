@@ -186,7 +186,7 @@ const FloatingColorPalette: React.FC<FloatingColorPaletteProps> = ({
     >
       {/* 标题栏和控制按钮 */}
       <div
-        className="flex items-center justify-between p-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-t-xl cursor-move"
+        className="flex items-center justify-between p-3 bg-primary text-primary-foreground rounded-t-xl cursor-move"
         onMouseDown={handleMouseDown}
         onTouchStart={handleTouchStart}
       >
@@ -282,8 +282,8 @@ const FloatingColorPalette: React.FC<FloatingColorPaletteProps> = ({
               onClick={onColorReplaceToggle}
               className={`flex-1 p-2 rounded-lg border transition-all duration-200 flex items-center justify-center gap-1 text-xs ${
                 colorReplaceState.isActive
-                  ? 'bg-blue-500 text-white border-blue-500'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-muted text-foreground border-border hover:bg-accent'
               }`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

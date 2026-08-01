@@ -309,7 +309,7 @@ const MagnifierTool: React.FC<MagnifierToolProps> = ({
         >
           {/* 标题栏 */}
           <div 
-            className="flex items-center justify-between p-3 bg-gradient-to-r from-green-500 to-teal-500 text-white rounded-t-xl cursor-move"
+            className="flex items-center justify-between p-3 bg-primary text-primary-foreground rounded-t-xl cursor-move"
             onMouseDown={handleTitleBarMouseDown}
             onTouchStart={handleTitleBarTouchStart}
           >

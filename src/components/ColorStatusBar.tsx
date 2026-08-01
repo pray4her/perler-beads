@@ -18,36 +18,36 @@ const ColorStatusBar: React.FC<ColorStatusBarProps> = ({
 }) => {
   if (!colorInfo) {
     return (
-      <div className="h-12 bg-white border-b border-gray-200 px-4 py-2 flex items-center">
-        <div className="text-gray-500">请选择颜色</div>
+      <div className="h-12 bg-card border-b border-border px-4 py-2 flex items-center">
+        <div className="text-muted-foreground">请选择颜色</div>
       </div>
     );
   }
 
-  const estimatedTime = Math.ceil((colorInfo.total - colorInfo.completed) * 0.1); // 假设每个格子0.5分钟
+  const estimatedTime = Math.ceil((colorInfo.total - colorInfo.completed) * 0.1);
 
   return (
-    <div className="h-12 bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between">
+    <div className="h-12 bg-card border-b border-border px-4 py-2 flex items-center justify-between">
       <div className="flex items-center space-x-3">
         <div
-          className="w-8 h-8 rounded-full border-2 border-gray-300"
+          className="w-8 h-8 rounded-full border-2 border-border"
           style={{ backgroundColor: currentColor }}
         />
-        <div className="text-sm font-mono font-bold text-gray-700 px-2">
+        <div className="text-sm font-mono font-bold text-foreground px-2">
           {colorInfo.name}
         </div>
         <div className="flex flex-col">
-          <div className="text-sm font-medium text-gray-800">
+          <div className="text-sm font-medium text-foreground">
             {colorInfo.completed}/{colorInfo.total}
           </div>
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-muted-foreground">
             预计还需 {estimatedTime}分钟
           </div>
         </div>
       </div>
-      
+
       <div className="text-right">
-        <div className="text-lg font-bold text-blue-600">
+        <div className="text-lg font-bold text-primary">
           {progressPercentage}%
         </div>
       </div>
