@@ -5,8 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "npx --yes serve@latest out",
     "lint": "next lint",
+    "check:frontend-regressions": "node ./scripts/check-frontend-regressions.mjs",
     "pages:deploy": "npm run build && wrangler pages deploy out --project-name perler-beads"
   },
   "engines": {

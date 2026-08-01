@@ -200,7 +200,26 @@ export function importCsvData(file: File): Promise<{
   });
 }
 
-// 下载图片的主函数
+interface DownloadImageParams {
+  mappedPixelData: MappedPixel[][] | null;
+  gridDimensions: { N: number; M: number } | null;
+  colorCounts: { [key: string]: { count: number; color: string } } | null;
+  totalBeadCount: number;
+  options: GridDownloadOptions;
+  activeBeadPalette: PaletteColor[];
+  selectedColorSystem: ColorSystem;
+}
+
+function triggerCanvasDownload(canvas: HTMLCanvasElement, filename: string) {
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = canvas.toDataURL('image/png');
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+// 制作底稿下载：对应编辑工作台的工程图版式。
 export async function downloadImage({
   mappedPixelData,
   gridDimensions,
@@ -209,15 +228,187 @@ export async function downloadImage({
   options,
   activeBeadPalette,
   selectedColorSystem
-}: {
-  mappedPixelData: MappedPixel[][] | null;
-  gridDimensions: { N: number; M: number } | null;
-  colorCounts: { [key: string]: { count: number; color: string } } | null;
-  totalBeadCount: number;
-  options: GridDownloadOptions;
-  activeBeadPalette: PaletteColor[];
-  selectedColorSystem: ColorSystem;
-}): Promise<void> {
+}: DownloadImageParams): Promise<void> {
+  if (!mappedPixelData || !gridDimensions || !colorCounts || activeBeadPalette.length === 0) {
+    alert('无法下载图纸，数据未生成或无效。');
+    return;
+  }
+
+  const { N, M } = gridDimensions;
+  const longestSide = Math.max(N, M);
+  const cellSize = Math.max(7, Math.min(28, Math.floor(6500 / Math.max(1, longestSide))));
+  const pagePadding = Math.max(18, Math.round(cellSize * 0.9));
+  const axisSize = options.showCoordinates ? Math.max(24, Math.round(cellSize * 1.3)) : 0;
+  const titleHeight = Math.max(68, Math.round(cellSize * 3.2));
+  const gridWidth = N * cellSize;
+  const gridHeight = M * cellSize;
+  const contentWidth = gridWidth + axisSize * 2;
+  const sheetWidth = contentWidth + pagePadding * 2;
+  const statsColumns = Math.max(2, Math.min(8, Math.floor(sheetWidth / 150)));
+  const statsKeys = Object.keys(colorCounts).sort((left, right) =>
+    sortColorKeys(
+      getColorKeyByHex(left, selectedColorSystem),
+      getColorKeyByHex(right, selectedColorSystem),
+    ),
+  );
+  const statsRows = Math.ceil(statsKeys.length / statsColumns);
+  const statsTitleHeight = options.includeStats ? 62 : 0;
+  const statsRowHeight = options.includeStats ? Math.max(58, Math.round(cellSize * 2.7)) : 0;
+  const statsHeight = options.includeStats
+    ? statsTitleHeight + statsRows * statsRowHeight + pagePadding
+    : 0;
+  const sheetHeight = titleHeight + axisSize * 2 + gridHeight + statsHeight + pagePadding * 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = sheetWidth;
+  canvas.height = sheetHeight;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    alert('无法创建图纸画布。');
+    return;
+  }
+
+  context.imageSmoothingEnabled = false;
+  context.fillStyle = '#faf9f5';
+  context.fillRect(0, 0, sheetWidth, sheetHeight);
+
+  const titleSize = Math.max(24, Math.round(titleHeight * 0.42));
+  context.fillStyle = '#687c52';
+  context.font = `700 ${titleSize}px system-ui, sans-serif`;
+  context.textAlign = 'left';
+  context.textBaseline = 'middle';
+  context.fillText(selectedColorSystem, pagePadding, titleHeight * 0.48);
+  const titleWidth = context.measureText(selectedColorSystem).width;
+  context.fillStyle = '#a29f96';
+  context.font = `400 ${Math.round(titleSize * 0.58)}px system-ui, sans-serif`;
+  context.fillText('色号', pagePadding + titleWidth + 8, titleHeight * 0.5);
+
+  const gridX = pagePadding + axisSize;
+  const gridY = pagePadding + titleHeight + axisSize;
+  const codeFontSize = Math.max(4, Math.floor(cellSize * 0.27));
+  context.font = `600 ${codeFontSize}px ui-monospace, monospace`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+
+  for (let row = 0; row < M; row++) {
+    for (let col = 0; col < N; col++) {
+      const cell = mappedPixelData[row]?.[col];
+      const x = gridX + col * cellSize;
+      const y = gridY + row * cellSize;
+      if (cell && !cell.isExternal) {
+        context.fillStyle = cell.color;
+        context.fillRect(x, y, cellSize, cellSize);
+        if (options.showCellNumbers && cellSize >= 10) {
+          context.fillStyle = getContrastColor(cell.color);
+          context.fillText(
+            getColorKeyByHex(cell.color, selectedColorSystem),
+            x + cellSize / 2,
+            y + cellSize / 2,
+            cellSize - 2,
+          );
+        }
+      } else {
+        const checker = Math.max(2, Math.floor(cellSize / 4));
+        context.fillStyle = '#ffffff';
+        context.fillRect(x, y, cellSize, cellSize);
+        context.fillStyle = '#eeeeeb';
+        context.fillRect(x, y, checker, checker);
+        context.fillRect(x + checker, y + checker, checker, checker);
+      }
+      context.strokeStyle = '#dddcd7';
+      context.lineWidth = 0.5;
+      context.strokeRect(x + 0.25, y + 0.25, cellSize - 0.5, cellSize - 0.5);
+    }
+  }
+
+  if (options.showGrid) {
+    context.strokeStyle = options.gridLineColor;
+    context.lineWidth = Math.max(1, cellSize * 0.07);
+    for (let col = 0; col <= N; col += options.gridInterval) {
+      const x = gridX + col * cellSize;
+      context.beginPath();
+      context.moveTo(x, gridY);
+      context.lineTo(x, gridY + gridHeight);
+      context.stroke();
+    }
+    for (let row = 0; row <= M; row += options.gridInterval) {
+      const y = gridY + row * cellSize;
+      context.beginPath();
+      context.moveTo(gridX, y);
+      context.lineTo(gridX + gridWidth, y);
+      context.stroke();
+    }
+  }
+
+  context.strokeStyle = '#76766f';
+  context.lineWidth = 1.2;
+  context.strokeRect(gridX, gridY, gridWidth, gridHeight);
+
+  if (options.showCoordinates) {
+    context.fillStyle = '#9b9992';
+    context.font = `400 ${Math.max(8, Math.round(cellSize * 0.42))}px ui-monospace, monospace`;
+    for (let col = 0; col < N; col++) {
+      if (col === 0 || (col + 1) % options.gridInterval === 0 || col === N - 1) {
+        const x = gridX + (col + 0.5) * cellSize;
+        context.fillText(String(col + 1), x, gridY - axisSize / 2);
+        context.fillText(String(col + 1), x, gridY + gridHeight + axisSize / 2);
+      }
+    }
+    for (let row = 0; row < M; row++) {
+      if (row === 0 || (row + 1) % options.gridInterval === 0 || row === M - 1) {
+        const y = gridY + (row + 0.5) * cellSize;
+        context.fillText(String(row + 1), gridX - axisSize / 2, y);
+        context.fillText(String(row + 1), gridX + gridWidth + axisSize / 2, y);
+      }
+    }
+  }
+
+  if (options.includeStats) {
+    const statsY = gridY + gridHeight + axisSize + pagePadding;
+    context.fillStyle = '#33332f';
+    context.font = `700 ${Math.max(16, Math.round(cellSize * 0.75))}px system-ui, sans-serif`;
+    context.textAlign = 'left';
+    context.fillText('用料清单', pagePadding, statsY + 18);
+    context.textAlign = 'right';
+    context.fillText(`共 ${totalBeadCount.toLocaleString('zh-CN')} 颗`, sheetWidth - pagePadding, statsY + 18);
+
+    const gap = Math.max(4, Math.round(pagePadding * 0.26));
+    const cardWidth = (sheetWidth - pagePadding * 2 - gap * (statsColumns - 1)) / statsColumns;
+    statsKeys.forEach((hex, index) => {
+      const row = Math.floor(index / statsColumns);
+      const col = index % statsColumns;
+      const x = pagePadding + col * (cardWidth + gap);
+      const y = statsY + statsTitleHeight + row * statsRowHeight;
+      const swatchHeight = statsRowHeight * 0.62;
+      context.fillStyle = colorCounts[hex].color;
+      context.beginPath();
+      context.roundRect(x, y, cardWidth, swatchHeight, Math.max(2, cellSize * 0.18));
+      context.fill();
+      context.fillStyle = getContrastColor(colorCounts[hex].color);
+      context.font = `700 ${Math.max(9, Math.round(cellSize * 0.45))}px ui-monospace, monospace`;
+      context.textAlign = 'center';
+      context.fillText(getColorKeyByHex(hex, selectedColorSystem), x + cardWidth / 2, y + swatchHeight / 2);
+      context.fillStyle = '#ffffff';
+      context.fillRect(x, y + swatchHeight, cardWidth, statsRowHeight - swatchHeight - gap);
+      context.fillStyle = '#33332f';
+      context.font = `600 ${Math.max(8, Math.round(cellSize * 0.38))}px ui-monospace, monospace`;
+      context.fillText(String(colorCounts[hex].count), x + cardWidth / 2, y + swatchHeight + (statsRowHeight - swatchHeight - gap) / 2);
+    });
+  }
+
+  triggerCanvasDownload(canvas, `bead-production-sheet-${N}x${M}-${selectedColorSystem}.png`);
+  if (options.exportCsv) exportCsvData({ mappedPixelData, gridDimensions, selectedColorSystem });
+}
+
+// 旧版绘制器保留为可回退的兼容导出。
+export async function downloadImageLegacy({
+  mappedPixelData,
+  gridDimensions,
+  colorCounts,
+  totalBeadCount,
+  options,
+  activeBeadPalette,
+  selectedColorSystem
+}: DownloadImageParams): Promise<void> {
   if (!mappedPixelData || !gridDimensions || gridDimensions.N === 0 || gridDimensions.M === 0 || activeBeadPalette.length === 0) {
     console.error("下载失败: 映射数据或尺寸无效。");
     alert("无法下载图纸，数据未生成或无效。");

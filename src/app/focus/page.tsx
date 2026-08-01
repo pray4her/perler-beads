@@ -18,6 +18,7 @@ import ColorPanel from '../../components/ColorPanel';
 import SettingsPanel from '../../components/SettingsPanel';
 import CelebrationAnimation from '../../components/CelebrationAnimation';
 import CompletionCard from '../../components/CompletionCard';
+import { ArrowLeft, Settings } from 'lucide-react';
 import { getColorKeyByHex, ColorSystem } from '../../utils/colorSystemUtils';
 import { Button } from '@/components/ui/button';
 
@@ -458,10 +459,11 @@ export default function FocusMode() {
 
   if (!mappedPixelData || !gridDimensions) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-2 border-muted border-b-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">加载中...</p>
+      <div className="min-h-[100dvh] bg-background flex items-center justify-center p-6">
+        <div className="w-full max-w-sm border border-border rounded-xl bg-card p-6 shadow-[var(--shadow-card)]">
+          <div className="h-3 w-28 rounded bg-muted mb-4"></div>
+          <div className="h-2 w-full rounded bg-muted"></div>
+          <p className="text-muted-foreground text-sm mt-4">正在载入制作进度</p>
         </div>
       </div>
     );
@@ -472,30 +474,28 @@ export default function FocusMode() {
     Math.round((currentColorInfo.completed / currentColorInfo.total) * 100) : 0;
 
   return (
-    <div className="h-screen flex flex-col bg-background">
+    <div className="h-[100dvh] min-h-[100dvh] flex flex-col bg-background">
       {/* 顶部导航栏 */}
-      <header className="h-15 bg-card border-b border-border px-4 py-3 flex items-center justify-between text-foreground">
+      <header className="min-h-16 bg-card border-b border-border px-3 sm:px-5 py-2 flex items-center justify-between text-foreground">
         <Button
           variant="ghost"
           onClick={() => window.history.back()}
           className="text-muted-foreground hover:text-foreground"
         >
-          <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
+          <ArrowLeft className="h-4 w-4" />
           返回
         </Button>
-        <h1 className="text-lg font-medium">专心拼豆（AlphaTest）</h1>
+        <div className="text-center">
+          <h1 className="text-base sm:text-lg font-semibold">专心模式</h1>
+          <p className="hidden sm:block text-[11px] text-muted-foreground">逐色完成当前底稿</p>
+        </div>
         <Button
           variant="ghost"
           size="icon"
           onClick={() => setFocusState(prev => ({ ...prev, showSettingsPanel: true }))}
           className="text-muted-foreground hover:text-foreground"
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
+          <Settings className="h-5 w-5" />
         </Button>
       </header>
 
@@ -542,32 +542,30 @@ export default function FocusMode() {
         elapsedTime={formatTime(focusState.totalElapsedTime)}
       />
 
-      {/* 颜色选择面板 */}
-      {focusState.showColorPanel && (
-        <ColorPanel
-          colors={availableColors}
-          currentColor={focusState.currentColor}
-          onColorSelect={handleColorChange}
-          onClose={() => setFocusState(prev => ({ ...prev, showColorPanel: false }))}
-        />
-      )}
+      {/* 颜色选择面板 — 常挂载受控 Sheet，避免 open 恒 true + 卸载导致滚动锁残留 */}
+      <ColorPanel
+        isOpen={focusState.showColorPanel}
+        colors={availableColors}
+        currentColor={focusState.currentColor}
+        onColorSelect={handleColorChange}
+        onClose={() => setFocusState(prev => ({ ...prev, showColorPanel: false }))}
+      />
 
-      {/* 设置面板 */}
-      {focusState.showSettingsPanel && (
-        <SettingsPanel
-          guidanceMode={focusState.guidanceMode}
-          onGuidanceModeChange={(mode: 'nearest' | 'largest' | 'edge-first') => setFocusState(prev => ({ ...prev, guidanceMode: mode }))}
-          gridSectionInterval={focusState.gridSectionInterval}
-          onGridSectionIntervalChange={(interval: number) => setFocusState(prev => ({ ...prev, gridSectionInterval: interval }))}
-          showSectionLines={focusState.showSectionLines}
-          onShowSectionLinesChange={(show: boolean) => setFocusState(prev => ({ ...prev, showSectionLines: show }))}
-          sectionLineColor={focusState.sectionLineColor}
-          onSectionLineColorChange={(color: string) => setFocusState(prev => ({ ...prev, sectionLineColor: color }))}
-          enableCelebration={focusState.enableCelebration}
-          onEnableCelebrationChange={(enable: boolean) => setFocusState(prev => ({ ...prev, enableCelebration: enable }))}
-          onClose={() => setFocusState(prev => ({ ...prev, showSettingsPanel: false }))}
-        />
-      )}
+      {/* 设置面板 — 同上受控模式 */}
+      <SettingsPanel
+        isOpen={focusState.showSettingsPanel}
+        guidanceMode={focusState.guidanceMode}
+        onGuidanceModeChange={(mode: 'nearest' | 'largest' | 'edge-first') => setFocusState(prev => ({ ...prev, guidanceMode: mode }))}
+        gridSectionInterval={focusState.gridSectionInterval}
+        onGridSectionIntervalChange={(interval: number) => setFocusState(prev => ({ ...prev, gridSectionInterval: interval }))}
+        showSectionLines={focusState.showSectionLines}
+        onShowSectionLinesChange={(show: boolean) => setFocusState(prev => ({ ...prev, showSectionLines: show }))}
+        sectionLineColor={focusState.sectionLineColor}
+        onSectionLineColorChange={(color: string) => setFocusState(prev => ({ ...prev, sectionLineColor: color }))}
+        enableCelebration={focusState.enableCelebration}
+        onEnableCelebrationChange={(enable: boolean) => setFocusState(prev => ({ ...prev, enableCelebration: enable }))}
+        onClose={() => setFocusState(prev => ({ ...prev, showSettingsPanel: false }))}
+      />
 
       {/* 庆祝动画 */}
       <CelebrationAnimation

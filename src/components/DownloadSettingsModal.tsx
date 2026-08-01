@@ -118,13 +118,19 @@ const DownloadSettingsModal: React.FC<DownloadSettingsModalProps> = ({
                 <Label>网格线间隔 (每 N 格)</Label>
                 <div className="flex items-center gap-3">
                   <Slider
-                    value={[tempOptions.gridInterval]}
+                    value={tempOptions.gridInterval}
                     min={5}
                     max={20}
                     step={1}
                     onValueChange={(vals) => {
-                      const next = Array.isArray(vals) ? vals[0] : tempOptions.gridInterval;
-                      handleOptionChange('gridInterval', next);
+                      const next = typeof vals === 'number'
+                        ? vals
+                        : Array.isArray(vals)
+                          ? vals[0]
+                          : tempOptions.gridInterval;
+                      if (typeof next === 'number' && Number.isFinite(next)) {
+                        handleOptionChange('gridInterval', next);
+                      }
                     }}
                     className="flex-1"
                   />

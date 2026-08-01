@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 
 interface SettingsPanelProps {
+  isOpen: boolean;
   guidanceMode: 'nearest' | 'largest' | 'edge-first';
   onGuidanceModeChange: (mode: 'nearest' | 'largest' | 'edge-first') => void;
   gridSectionInterval: number;
@@ -23,6 +24,7 @@ interface SettingsPanelProps {
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
+  isOpen,
   guidanceMode,
   onGuidanceModeChange,
   gridSectionInterval,
@@ -45,7 +47,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   ];
 
   return (
-    <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Sheet open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent side="right" className="w-80 max-w-[90vw] p-0 gap-0">
         <SheetHeader className="border-b border-border">
           <SheetTitle>设置</SheetTitle>

@@ -5,7 +5,6 @@ import Script from 'next/script';
 import InstallPWA from '../components/InstallPWA';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
 import { Upload, Pencil, Eye, Download, Info } from 'lucide-react';
 
 // 导入像素化工具和类型
@@ -84,6 +83,8 @@ import MagnifierTool from '../components/MagnifierTool';
 import MagnifierSelectionOverlay from '../components/MagnifierSelectionOverlay';
 import { loadPaletteSelections, savePaletteSelections, presetToSelections, PaletteSelections } from '../utils/localStorageUtils';
 import { TRANSPARENT_KEY, transparentColorData } from '../utils/pixelEditingUtils';
+import { recalculateColorStats } from '../utils/pixelEditingUtils';
+import PixelEditorWorkspace from '../components/PixelEditorWorkspace';
 
 import FocusModePreDownloadModal from '../components/FocusModePreDownloadModal';
 
@@ -334,6 +335,10 @@ export default function Home() {
     setSimilarityThresholdInput(similarityThreshold.toString());
   }, [granularity, similarityThreshold]);
 
+  useEffect(() => {
+    if (isManualColoringMode) window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [isManualColoringMode]);
+
   // ++ Calculate unique colors currently on the grid for the palette ++
   const currentGridColors = useMemo(() => {
     if (!mappedPixelData) return [];
@@ -439,8 +444,8 @@ export default function Home() {
     localStorage.setItem('focusMode_colorCounts', JSON.stringify(colorCounts));
     localStorage.setItem('focusMode_selectedColorSystem', selectedColorSystem);
     
-    // 跳转到专心拼豆页面
-    window.location.href = '/focus';
+    // 跳转到专心拼豆页面（trailingSlash: true → 必须带尾斜杠）
+    window.location.href = '/focus/';
   };
 
   // 添加一个安全的文件输入触发函数
@@ -481,6 +486,34 @@ export default function Home() {
       }, 100);
     }
   }, [isMounted]);
+
+  const loadExampleImage = useCallback(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 48;
+    canvas.height = 48;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.imageSmoothingEnabled = false;
+    context.fillStyle = '#F7F2E8';
+    context.fillRect(0, 0, 48, 48);
+    context.fillStyle = '#C73745';
+    context.fillRect(8, 8, 12, 8);
+    context.fillRect(28, 8, 12, 8);
+    context.fillRect(4, 16, 40, 12);
+    context.fillRect(10, 28, 28, 8);
+    context.fillRect(16, 36, 16, 6);
+    context.fillStyle = '#F0A4B2';
+    context.fillRect(12, 12, 8, 8);
+    context.fillRect(28, 12, 8, 8);
+    setOriginalImageSrc(canvas.toDataURL('image/png'));
+    setMappedPixelData(null);
+    setGridDimensions(null);
+    setColorCounts(null);
+    setTotalBeadCount(0);
+    setGranularity(48);
+    setGranularityInput('48');
+    setRemapTrigger((value) => value + 1);
+  }, []);
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1894,6 +1927,17 @@ export default function Home() {
     return sortColorsByHue(selectedColors);
   }, [customPaletteSelections, selectedColorSystem]);
 
+  const handleEditorGridChange = useCallback((nextGrid: MappedPixel[][]) => {
+    const nextHeight = nextGrid.length;
+    const nextWidth = nextGrid[0]?.length ?? 0;
+    const stats = recalculateColorStats(nextGrid);
+    setMappedPixelData(nextGrid);
+    setGridDimensions({ N: nextWidth, M: nextHeight });
+    setColorCounts(stats.colorCounts);
+    setTotalBeadCount(stats.totalCount);
+    setInitialGridColorKeys(new Set(Object.keys(stats.colorCounts)));
+  }, []);
+
   return (
     <>
     <style dangerouslySetInnerHTML={{ __html: '@keyframes toastFadeInOut{0%{opacity:0;transform:translate(-50%,10px)}15%{opacity:1;transform:translate(-50%,0)}85%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;transform:translate(-50%,-10px)}}' }} />
@@ -1946,23 +1990,20 @@ export default function Home() {
     />
 
     {/* Apply dark mode styles to the main container */}
-    <div className="min-h-[100dvh] p-4 sm:p-6 flex flex-col items-center bg-background font-sans overflow-x-hidden">
-      <header className="w-full md:max-w-4xl text-center mt-8 mb-10 sm:mt-10 sm:mb-12">
+    <div className={`min-h-[100dvh] flex flex-col items-center bg-background font-sans overflow-x-hidden ${isManualColoringMode ? 'p-0' : 'p-4 sm:p-6'}`}>
+      {!isManualColoringMode && <header className="w-full md:max-w-5xl text-left mt-8 mb-10 sm:mt-10 sm:mb-12">
         <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-foreground">
           拼豆底稿生成器
         </h1>
-        <p className="mt-2 text-sm sm:text-base text-muted-foreground tracking-wide">
-          Perler Beads Generator
+        <p className="mt-3 text-sm sm:text-base text-muted-foreground max-w-xl">
+          把图片转换成可编辑、可制作的拼豆底稿。完成配色后进入工作台精修，再导出展示图或制作图纸。
         </p>
-        <p className="mt-3 text-sm text-muted-foreground max-w-md mx-auto">
-          上传图片，调整精细度，生成可下载的拼豆底稿与采购清单。
-        </p>
-      </header>
+      </header>}
 
       {/* Apply dark mode styles to the main section */}
-      <main ref={mainRef} className="w-full md:max-w-4xl flex flex-col items-center space-y-5 sm:space-y-6 relative overflow-hidden">
+      <main ref={mainRef} className={`w-full flex flex-col items-center relative ${isManualColoringMode ? 'max-w-none min-h-[100dvh]' : 'md:max-w-5xl space-y-5 sm:space-y-6'}`}>
         {/* Apply dark mode styles to the Drop Zone */}
-        <div
+        {!isManualColoringMode && <div
           onDrop={handleDrop} onDragOver={handleDragOver} onDragEnter={handleDragOver}
           onClick={isMounted ? triggerFileInput : undefined}
           className={`border-2 border-dashed border-border rounded-lg p-6 sm:p-8 text-center ${isMounted ? 'cursor-pointer hover:border-foreground hover:bg-muted' : 'cursor-wait'} transition-all duration-300 w-full md:max-w-md flex flex-col justify-center items-center shadow-sm hover:shadow-md text-muted-foreground`}
@@ -1971,7 +2012,16 @@ export default function Home() {
           <Upload className="h-10 w-10 sm:h-12 sm:w-12 mb-2 sm:mb-3" strokeWidth={1.5} />
           <p className="text-xs sm:text-sm">拖放图片到此处，或<span className="font-medium text-foreground">点击选择文件</span></p>
           <p className="text-xs mt-1">支持 JPG, PNG, GIF 图片格式，或 CSV 数据文件</p>
-        </div>
+        </div>}
+        {!isManualColoringMode && !originalImageSrc && (
+          <button
+            type="button"
+            className="h-9 rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+            onClick={loadExampleImage}
+          >
+            载入示例
+          </button>
+        )}
 
         {/* Apply dark mode styles to the Tip Box */}
         {!originalImageSrc && (
@@ -2135,31 +2185,27 @@ export default function Home() {
             )}
 
             {/* Output Section */}
-            <div className="w-full md:max-w-2xl">
+            <div className={isManualColoringMode ? "w-full" : "w-full md:max-w-3xl"}>
               <canvas ref={originalCanvasRef} className="hidden"></canvas>
-
-              {/* ++ 手动编辑模式提示信息 ++ */}
-              {isManualColoringMode && mappedPixelData && gridDimensions && (
-                <div className="w-full mb-4 p-3 bg-muted rounded-lg border border-border">
-                  <div className="flex justify-center">
-                    <div className="bg-muted border border-border rounded-lg p-2 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3 text-xs text-muted-foreground w-full sm:w-auto">
-                      <div className="flex items-center gap-1 w-full sm:w-auto">
-                        <Pencil className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span>使用右上角菜单操作</span>
-                      </div>
-                      <Separator orientation="vertical" className="hidden sm:block h-4" />
-                      <div className="flex items-center gap-1 w-full sm:w-auto">
-                        <Eye className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span>推荐电脑操作，上色更精准</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Canvas Preview Container */}
               {/* Apply dark mode styles */}
-              <div className="bg-card p-4 rounded-xl shadow-md border border-border">
+              {isManualColoringMode && mappedPixelData && gridDimensions ? (
+                <PixelEditorWorkspace
+                  mappedPixelData={mappedPixelData}
+                  gridDimensions={gridDimensions}
+                  paletteColors={fullPaletteColors}
+                  currentColors={currentGridColors}
+                  selectedColorSystem={selectedColorSystem}
+                  onChange={handleEditorGridChange}
+                  onExit={() => {
+                    setIsManualColoringMode(false);
+                    setSelectedColor(null);
+                    setTooltipData(null);
+                  }}
+                  onDownloadPattern={() => setIsDownloadSettingsOpen(true)}
+                />
+              ) : <div className="bg-card p-4 rounded-xl shadow-[var(--shadow-card)] border border-border">
                 {gridDimensions && gridDimensions.N > 100 && (
                   <div className="mb-3 p-2 bg-muted border border-border rounded-lg text-xs text-muted-foreground text-center">
                     <div className="flex items-center justify-center gap-1">
@@ -2181,7 +2227,7 @@ export default function Home() {
                     onHighlightComplete={handleHighlightComplete}
                   />
                 </div>
-              </div>
+              </div>}
             </div>
           </div> // This closes the main div started after originalImageSrc check
         )}
@@ -2352,7 +2398,7 @@ export default function Home() {
                 }}
               >
                  <Pencil className="h-5 w-5" />
-                 进入手动编辑模式
+                 进入编辑工作台
              </Button>
 
              <Button
@@ -2361,7 +2407,7 @@ export default function Home() {
                 onClick={handleEnterFocusMode}
               >
                  <Eye className="h-5 w-5" />
-                 进入专心拼豆模式（AlphaTest）
+                 进入专心模式
              </Button>
             </div>
         )} {/* ++ End of RENDER Enter Manual Mode Button ++ */}
@@ -2388,8 +2434,8 @@ export default function Home() {
 
       </main>
 
-      {/* 悬浮工具栏 */}
-      <FloatingToolbar
+      {/* 旧版悬浮工具仅保留兼容代码，不再与工作台同时渲染。 */}
+      {!isManualColoringMode && <FloatingToolbar
         isManualColoringMode={isManualColoringMode}
         isPaletteOpen={isFloatingPaletteOpen}
         onTogglePalette={() => setIsFloatingPaletteOpen(!isFloatingPaletteOpen)}
@@ -2409,10 +2455,10 @@ export default function Home() {
         }}
         onToggleMagnifier={handleToggleMagnifier}
         isMagnifierActive={isMagnifierActive}
-      />
+      />}
 
       {/* 悬浮调色盘 */}
-      {isManualColoringMode && (
+      {false && isManualColoringMode && (
         <FloatingColorPalette
           colors={currentGridColors}
           selectedColor={selectedColor}
@@ -2437,7 +2483,7 @@ export default function Home() {
       )}
 
       {/* 放大镜工具 */}
-      {isManualColoringMode && (
+      {false && isManualColoringMode && (
         <>
           <MagnifierTool
             isActive={isMagnifierActive}
@@ -2447,7 +2493,7 @@ export default function Home() {
             selectedColor={selectedColor}
             selectedColorSystem={selectedColorSystem}
             onPixelEdit={handleMagnifierPixelEdit}
-            cellSize={gridDimensions ? Math.min(6, Math.max(4, 500 / Math.max(gridDimensions.N, gridDimensions.M))) : 6}
+            cellSize={gridDimensions ? Math.min(6, Math.max(4, 500 / Math.max(gridDimensions?.N ?? 1, gridDimensions?.M ?? 1))) : 6}
             selectionArea={magnifierSelectionArea}
             onClearSelection={() => setMagnifierSelectionArea(null)}
             isFloatingActive={activeFloatingTool === 'magnifier'}
@@ -2460,18 +2506,18 @@ export default function Home() {
             isActive={isMagnifierActive && !magnifierSelectionArea}
             canvasRef={pixelatedCanvasRef}
             gridDimensions={gridDimensions}
-            cellSize={gridDimensions ? Math.min(6, Math.max(4, 500 / Math.max(gridDimensions.N, gridDimensions.M))) : 6}
+            cellSize={gridDimensions ? Math.min(6, Math.max(4, 500 / Math.max(gridDimensions?.N ?? 1, gridDimensions?.M ?? 1))) : 6}
             onSelectionComplete={setMagnifierSelectionArea}
           />
         </>
       )}
 
       {/* Apply dark mode styles to the Footer */}
-      <footer className="w-full md:max-w-4xl mt-10 mb-6 py-6 text-center text-xs sm:text-sm text-muted-foreground border-t border-border">
+      {!isManualColoringMode && <footer className="w-full md:max-w-5xl mt-10 mb-6 py-6 text-left text-xs sm:text-sm text-muted-foreground border-t border-border">
         <p className="font-medium text-foreground">
           拼豆底稿生成器 &copy; {new Date().getFullYear()}
         </p>
-      </footer>
+      </footer>}
 
       {/* 使用导入的下载设置弹窗组件 */}
       <DownloadSettingsModal 

@@ -17,6 +17,7 @@ interface ColorInfo {
 }
 
 interface ColorPanelProps {
+  isOpen: boolean;
   colors: ColorInfo[];
   currentColor: string;
   onColorSelect: (color: string) => void;
@@ -24,6 +25,7 @@ interface ColorPanelProps {
 }
 
 const ColorPanel: React.FC<ColorPanelProps> = ({
+  isOpen,
   colors,
   currentColor,
   onColorSelect,
@@ -53,7 +55,7 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
     });
 
   return (
-    <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Sheet open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent
         side="bottom"
         showCloseButton={false}

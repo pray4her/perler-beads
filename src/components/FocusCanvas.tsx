@@ -331,7 +331,7 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
   return (
     <div 
       ref={containerRef}
-      className="w-full h-full flex items-center justify-center overflow-hidden bg-gray-100"
+      className="w-full h-full flex items-center justify-center overflow-hidden bg-muted"
       style={{ touchAction: 'none' }}
     >
       <div
@@ -342,7 +342,7 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
       >
         <canvas
           ref={canvasRef}
-          className="cursor-crosshair border border-gray-300"
+          className="cursor-crosshair border border-border shadow-[var(--shadow-card)]"
           onClick={handleClick}
           onWheel={handleWheel}
           onTouchStart={handleTouchStart}
