@@ -120,6 +120,41 @@ if (!/ResultPreviewPanel/.test(editor) || !/onDownloadPattern/.test(editor)) {
 if (!/touchPointersRef/.test(editor) || !/pinchRef/.test(editor)) {
   failures.push('editor-touch: two-pointer pan and zoom gesture state is not wired');
 }
+if (!/const handlePointerCancel/.test(editor) || /onPointerCancel=\{handlePointerUp\}/.test(editor)) {
+  failures.push('editor-pointer-cancel: cancelled gestures must roll back transient drawing instead of committing it');
+}
+
+// --- 6) Editor cell borders: collapsed 1px fillRect (not per-cell strokeRect) ---
+const drawCellMatch = editor.match(/function drawCell\([\s\S]*?\n\}/);
+if (!drawCellMatch) {
+  failures.push('editor-borders: drawCell function not found');
+} else if (/strokeRect\s*\(/.test(drawCellMatch[0])) {
+  failures.push(
+    'editor-borders: drawCell uses strokeRect per cell (shared edges look uneven under zoom)',
+  );
+}
+if (!/function drawCellGridLines/.test(editor)) {
+  failures.push(
+    'editor-borders: missing drawCellGridLines helper (crisp collapsed top+left fillRect grid)',
+  );
+}
+if (!/function drawCellSetOutline/.test(editor) || !/renderPaintStrokeOverlay/.test(editor)) {
+  failures.push(
+    'editor-paint-stroke: brush/eraser must show a transient continuous outline that clears on pointer up',
+  );
+}
+if (!/paintedKeys/.test(editor)) {
+  failures.push('editor-paint-stroke: gesture must track paintedKeys for stroke accent overlay');
+}
+if (!/function addExposedCellEdges/.test(editor)) {
+  failures.push('editor-paint-stroke: trajectory must outline exposed edges instead of boxing every touched cell');
+}
+if (!/function drawBlankCell/.test(editor) || !/pixel-editor-empty-hint/.test(editor)) {
+  failures.push('editor-empty-state: transparent checker cells and blank-canvas guidance must remain visible');
+}
+if (!/MINOR_GRID_ZOOM/.test(editor) || !/point\.(?:row|col) % 5/.test(editor)) {
+  failures.push('editor-semantic-zoom: minor grid and five-cell guide hierarchy is missing');
+}
 
 // --- report ---
 if (failures.length) {

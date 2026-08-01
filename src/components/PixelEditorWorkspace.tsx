@@ -82,6 +82,8 @@ interface GestureState {
   last: GridPoint;
   pointerId: number;
   workingGrid?: MappedPixel[][];
+  /** Cells touched in the active brush/eraser stroke (overlay accent only). */
+  paintedKeys?: Set<string>;
   panStart?: { x: number; y: number; left: number; top: number };
 }
 
@@ -96,6 +98,13 @@ interface PinchState {
 
 const CELL_SIZE = 14;
 const MAX_HISTORY = 80;
+const EDITOR_ACCENT_LIGHT = "#b43e2b";
+const EDITOR_ACCENT_DARK = "#df715f";
+const MINOR_GRID_ZOOM = 0.55;
+
+function cellKey(point: GridPoint): string {
+  return `${point.row},${point.col}`;
+}
 
 const defaultPreviewSettings: PreviewSettings = {
   title: "可更改此文字",
@@ -150,6 +159,64 @@ function getCellFromPointer(
   return { row, col };
 }
 
+function getEditorAccent(dark: boolean): string {
+  return dark ? EDITOR_ACCENT_DARK : EDITOR_ACCENT_LIGHT;
+}
+
+function getEditorGridLineColor(dark: boolean, major: boolean): string {
+  if (major) return dark ? "rgba(250,249,245,0.32)" : "rgba(20,20,19,0.3)";
+  return dark ? "rgba(250,249,245,0.14)" : "rgba(20,20,19,0.13)";
+}
+
+function drawBlankCell(
+  context: CanvasRenderingContext2D,
+  point: GridPoint,
+  dark: boolean,
+) {
+  const x = point.col * CELL_SIZE;
+  const y = point.row * CELL_SIZE;
+  const half = CELL_SIZE / 2;
+  context.fillStyle = dark ? "#252522" : "#f7f6f2";
+  context.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+  context.fillStyle = dark ? "#2d2d29" : "#ebe9e2";
+  context.fillRect(x, y, half, half);
+  context.fillRect(x + half, y + half, half, half);
+}
+
+/**
+ * Crisp 1px grid via fillRect (MDN: strokes on integer coords blur across two pixels).
+ * Draw top+left only so shared edges stay 1px — per-cell strokeRect doubles adjacent borders.
+ */
+function drawCellGridLines(
+  context: CanvasRenderingContext2D,
+  point: GridPoint,
+  columns: number,
+  rows: number,
+  dark: boolean,
+  zoom: number,
+) {
+  const x = point.col * CELL_SIZE;
+  const y = point.row * CELL_SIZE;
+  const majorRow = point.row % 5 === 0;
+  const majorCol = point.col % 5 === 0;
+  if (zoom >= MINOR_GRID_ZOOM || majorRow) {
+    context.fillStyle = getEditorGridLineColor(dark, majorRow);
+    context.fillRect(x, y, CELL_SIZE, 1);
+  }
+  if (zoom >= MINOR_GRID_ZOOM || majorCol) {
+    context.fillStyle = getEditorGridLineColor(dark, majorCol);
+    context.fillRect(x, y, 1, CELL_SIZE);
+  }
+  if (point.col === columns - 1) {
+    context.fillStyle = getEditorGridLineColor(dark, true);
+    context.fillRect(x + CELL_SIZE - 1, y, 1, CELL_SIZE);
+  }
+  if (point.row === rows - 1) {
+    context.fillStyle = getEditorGridLineColor(dark, true);
+    context.fillRect(x, y + CELL_SIZE - 1, CELL_SIZE, 1);
+  }
+}
+
 function drawCell(
   context: CanvasRenderingContext2D,
   cell: MappedPixel,
@@ -157,14 +224,19 @@ function drawCell(
   showCode: boolean,
   colorSystem: ColorSystem,
   dark: boolean,
+  columns: number,
+  rows: number,
+  zoom: number,
 ) {
   const x = point.col * CELL_SIZE;
   const y = point.row * CELL_SIZE;
-  context.fillStyle = cell.isExternal ? (dark ? "#242422" : "#f5f4f0") : cell.color;
-  context.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-  context.strokeStyle = dark ? "rgba(250,249,245,0.15)" : "rgba(20,20,19,0.16)";
-  context.lineWidth = 0.5;
-  context.strokeRect(x + 0.25, y + 0.25, CELL_SIZE - 0.5, CELL_SIZE - 0.5);
+  if (cell.isExternal) {
+    drawBlankCell(context, point, dark);
+  } else {
+    context.fillStyle = cell.color;
+    context.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+  }
+  drawCellGridLines(context, point, columns, rows, dark, zoom);
 
   if (showCode && !cell.isExternal) {
     const hex = cell.color.replace("#", "");
@@ -185,9 +257,67 @@ function drawCell(
   }
 }
 
+function addExposedCellEdges(
+  context: CanvasRenderingContext2D,
+  point: GridPoint,
+  keys: Set<string>,
+) {
+  const x = point.col * CELL_SIZE;
+  const y = point.row * CELL_SIZE;
+  if (!keys.has(cellKey({ row: point.row - 1, col: point.col }))) {
+    context.moveTo(x, y);
+    context.lineTo(x + CELL_SIZE, y);
+  }
+  if (!keys.has(cellKey({ row: point.row, col: point.col + 1 }))) {
+    context.moveTo(x + CELL_SIZE, y);
+    context.lineTo(x + CELL_SIZE, y + CELL_SIZE);
+  }
+  if (!keys.has(cellKey({ row: point.row + 1, col: point.col }))) {
+    context.moveTo(x + CELL_SIZE, y + CELL_SIZE);
+    context.lineTo(x, y + CELL_SIZE);
+  }
+  if (!keys.has(cellKey({ row: point.row, col: point.col - 1 }))) {
+    context.moveTo(x, y + CELL_SIZE);
+    context.lineTo(x, y);
+  }
+}
+
+function drawCellSetOutline(
+  context: CanvasRenderingContext2D,
+  keys: Set<string>,
+  dark: boolean,
+  zoom: number,
+  tint = true,
+) {
+  context.save();
+  if (tint) {
+    context.fillStyle = dark ? "rgba(223,113,95,0.13)" : "rgba(180,62,43,0.1)";
+    for (const key of keys) {
+      const [row, col] = key.split(",").map(Number);
+      context.fillRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+    }
+  }
+  context.beginPath();
+  for (const key of keys) {
+    const [row, col] = key.split(",").map(Number);
+    addExposedCellEdges(context, { row, col }, keys);
+  }
+  context.lineCap = "square";
+  context.lineJoin = "miter";
+  context.strokeStyle = dark ? "rgba(20,20,19,0.92)" : "rgba(250,249,245,0.96)";
+  context.lineWidth = 3.5 / zoom;
+  context.stroke();
+  context.strokeStyle = getEditorAccent(dark);
+  context.lineWidth = 1.5 / zoom;
+  context.stroke();
+  context.restore();
+}
+
 function drawSelectionOverlay(
   context: CanvasRenderingContext2D,
   selection: GridSelection,
+  dark: boolean,
+  zoom: number,
   rowOffset = 0,
   colOffset = 0,
 ) {
@@ -196,13 +326,37 @@ function drawSelectionOverlay(
   const y = (normalized.startRow + rowOffset) * CELL_SIZE;
   const width = (normalized.endCol - normalized.startCol + 1) * CELL_SIZE;
   const height = (normalized.endRow - normalized.startRow + 1) * CELL_SIZE;
+  const inset = 1.75 / zoom;
   context.save();
-  context.fillStyle = "rgba(180, 62, 43, 0.11)";
+  context.fillStyle = dark ? "rgba(223,113,95,0.12)" : "rgba(180,62,43,0.09)";
   context.fillRect(x, y, width, height);
-  context.strokeStyle = "#b43e2b";
-  context.lineWidth = 1.5;
-  context.setLineDash([5, 3]);
-  context.strokeRect(x + 0.75, y + 0.75, width - 1.5, height - 1.5);
+  context.strokeStyle = dark ? "rgba(20,20,19,0.9)" : "rgba(250,249,245,0.98)";
+  context.lineWidth = 4 / zoom;
+  context.strokeRect(x + inset, y + inset, width - inset * 2, height - inset * 2);
+  context.strokeStyle = getEditorAccent(dark);
+  context.lineWidth = 1.5 / zoom;
+  context.setLineDash([6 / zoom, 4 / zoom]);
+  context.strokeRect(x + inset, y + inset, width - inset * 2, height - inset * 2);
+  context.restore();
+}
+
+function drawHoverCell(
+  context: CanvasRenderingContext2D,
+  point: GridPoint,
+  dark: boolean,
+  zoom: number,
+) {
+  const inset = 1.5 / zoom;
+  const x = point.col * CELL_SIZE + inset;
+  const y = point.row * CELL_SIZE + inset;
+  const size = CELL_SIZE - inset * 2;
+  context.save();
+  context.strokeStyle = dark ? "rgba(20,20,19,0.88)" : "rgba(250,249,245,0.96)";
+  context.lineWidth = 3 / zoom;
+  context.strokeRect(x, y, size, size);
+  context.strokeStyle = getEditorAccent(dark);
+  context.lineWidth = 1 / zoom;
+  context.strokeRect(x, y, size, size);
   context.restore();
 }
 
@@ -286,23 +440,50 @@ export default function PixelEditorWorkspace({
     if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
   }, []);
 
-  const renderOverlay = useCallback((activeSelection = selection, rowOffset = 0, colOffset = 0) => {
+  const renderPaintStrokeOverlay = useCallback((paintedKeys: Set<string>) => {
     const canvas = overlayRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
     context.clearRect(0, 0, canvas.width, canvas.height);
-    if (activeSelection) drawSelectionOverlay(context, activeSelection, rowOffset, colOffset);
-  }, [selection]);
+    drawCellSetOutline(context, paintedKeys, darkMode, zoom);
+  }, [darkMode, zoom]);
+
+  const renderOverlay = useCallback((
+    activeSelection = selection,
+    rowOffset = 0,
+    colOffset = 0,
+    hoverPoint: GridPoint | null = null,
+  ) => {
+    const canvas = overlayRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (activeSelection) drawSelectionOverlay(context, activeSelection, darkMode, zoom, rowOffset, colOffset);
+    if (hoverPoint) drawHoverCell(context, hoverPoint, darkMode, zoom);
+  }, [darkMode, selection, zoom]);
 
   const drawGrid = useCallback((grid = dataRef.current) => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
+    context.imageSmoothingEnabled = false;
     context.clearRect(0, 0, canvas.width, canvas.height);
     const showCode = zoom >= 1.7;
-    for (let row = 0; row < grid.length; row++) {
+    const rows = grid.length;
+    const columns = grid[0]?.length ?? 0;
+    for (let row = 0; row < rows; row++) {
       for (let col = 0; col < (grid[row]?.length ?? 0); col++) {
-        drawCell(context, grid[row][col], { row, col }, showCode, selectedColorSystem, darkMode);
+        drawCell(
+          context,
+          grid[row][col],
+          { row, col },
+          showCode,
+          selectedColorSystem,
+          darkMode,
+          columns,
+          rows,
+          zoom,
+        );
       }
     }
   }, [darkMode, selectedColorSystem, zoom]);
@@ -368,32 +549,37 @@ export default function PixelEditorWorkspace({
     const context = canvasRef.current?.getContext("2d");
     const cell = grid[point.row]?.[point.col];
     if (!context || !cell) return;
-    drawCell(context, cell, point, zoom >= 1.7, selectedColorSystem, darkMode);
+    const rows = grid.length;
+    const columns = grid[0]?.length ?? 0;
+    drawCell(context, cell, point, zoom >= 1.7, selectedColorSystem, darkMode, columns, rows, zoom);
   }, [darkMode, selectedColorSystem, zoom]);
 
   const paintGestureSegment = useCallback((gesture: GestureState, point: GridPoint) => {
     if (!gesture.workingGrid) return;
     const color = gesture.tool === "eraser" ? transparentColorData : selectedColor;
     const points = getLinePoints(gesture.last, point);
+    if (!gesture.paintedKeys) gesture.paintedKeys = new Set();
     for (const current of points) {
       if (!gesture.workingGrid[current.row]?.[current.col]) continue;
       gesture.workingGrid[current.row][current.col] = color.key === TRANSPARENT_KEY
         ? { ...transparentColorData }
         : { ...color, isExternal: false };
+      gesture.paintedKeys.add(cellKey(current));
       drawWorkingCell(gesture.workingGrid, current);
     }
+    renderPaintStrokeOverlay(gesture.paintedKeys);
     gesture.last = point;
-  }, [drawWorkingCell, selectedColor]);
+  }, [drawWorkingCell, renderPaintStrokeOverlay, selectedColor]);
 
   const previewShape = useCallback((start: GridPoint, end: GridPoint, shape: "line" | "rectangle") => {
     const canvas = overlayRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
     context.clearRect(0, 0, canvas.width, canvas.height);
-    if (selection) drawSelectionOverlay(context, selection);
+    if (selection) drawSelectionOverlay(context, selection, darkMode, zoom);
     context.save();
     context.fillStyle = selectedColor.color;
-    context.globalAlpha = 0.72;
+    context.globalAlpha = 0.62;
     const points = shape === "line"
       ? getLinePoints(start, end)
       : (() => {
@@ -423,7 +609,8 @@ export default function PixelEditorWorkspace({
       context.fillRect(point.col * CELL_SIZE, point.row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
     }
     context.restore();
-  }, [rectangleMode, selectedColor, selection]);
+    drawCellSetOutline(context, new Set(points.map(cellKey)), darkMode, zoom, false);
+  }, [darkMode, rectangleMode, selectedColor, selection, zoom]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const point = getCellFromPointer(event, gridDimensions.N, gridDimensions.M);
@@ -491,6 +678,7 @@ export default function PixelEditorWorkspace({
     };
     if (tool === "brush" || tool === "eraser") {
       gesture.workingGrid = cloneGrid(dataRef.current);
+      gesture.paintedKeys = new Set();
       paintGestureSegment(gesture, point);
     } else if (tool === "select") {
       renderOverlay({ startRow: point.row, startCol: point.col, endRow: point.row, endCol: point.col });
@@ -521,7 +709,10 @@ export default function PixelEditorWorkspace({
         : "指针位于画布外";
     }
     const gesture = gestureRef.current;
-    if (!gesture) return;
+    if (!gesture) {
+      if (point && tool !== "move") renderOverlay(selection, 0, 0, point);
+      return;
+    }
 
     if (gesture.panStart && viewportRef.current) {
       viewportRef.current.scrollLeft = gesture.panStart.left - (event.clientX - gesture.panStart.x);
@@ -607,6 +798,18 @@ export default function PixelEditorWorkspace({
         }
       }
     }
+    clearOverlay();
+    requestAnimationFrame(() => renderOverlay());
+  };
+
+  const handlePointerCancel = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (event.pointerType === "touch") touchPointersRef.current.delete(event.pointerId);
+    pinchRef.current = null;
+    gestureRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    drawGrid();
     clearOverlay();
     requestAnimationFrame(() => renderOverlay());
   };
@@ -709,6 +912,11 @@ export default function PixelEditorWorkspace({
     ? `${Math.abs(selection.endCol - selection.startCol) + 1} × ${Math.abs(selection.endRow - selection.startRow) + 1}`
     : "未选择";
 
+  const hasCanvasContent = useMemo(
+    () => mappedPixelData.some((row) => row.some((cell) => !cell.isExternal)),
+    [mappedPixelData],
+  );
+
   const cursorName = gestureRef.current?.panStart || spacePressedRef.current
     ? "grabbing"
     : tool === "move"
@@ -789,16 +997,25 @@ export default function PixelEditorWorkspace({
                 ref={canvasRef}
                 className="pixel-editor-canvas"
                 style={{ cursor: cursorName }}
+                tabIndex={0}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerUp}
+                onPointerCancel={handlePointerCancel}
                 onPointerLeave={() => {
                   if (cursorLabelRef.current) cursorLabelRef.current.textContent = "指针位于画布外";
+                  if (!gestureRef.current) renderOverlay();
                 }}
                 aria-label="可编辑拼豆网格"
+                aria-describedby="pixel-editor-canvas-help"
               />
               <canvas ref={overlayRef} className="pixel-editor-overlay" aria-hidden="true" />
+              {!hasCanvasContent && (
+                <div className="pixel-editor-empty-hint" aria-hidden="true">
+                  <strong>空白画布</strong>
+                  <span>选择画笔或填充开始创作</span>
+                </div>
+              )}
             </div>
           </div>
           <div className="pixel-editor-statusbar">
@@ -815,6 +1032,9 @@ export default function PixelEditorWorkspace({
               </button>
             </div>
           </div>
+          <span id="pixel-editor-canvas-help" className="sr-only">
+            使用画笔、橡皮、填充、直线、矩形或框选工具编辑网格。按空格拖动画布，按 Control Z 撤销。
+          </span>
         </div>
 
         <aside className="pixel-editor-inspector">

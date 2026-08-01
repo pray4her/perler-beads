@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "npx --yes serve@latest out",
     "lint": "next lint",
-    "check:frontend-regressions": "node ./scripts/check-frontend-regressions.mjs",
+    "check:frontend-regressions": "node ./scripts/check-frontend-regressions.mjs && node ./scripts/check-editor-grid-borders.mjs",
     "pages:deploy": "npm run build && wrangler pages deploy out --project-name perler-beads"
   },
   "engines": {
