@@ -1,0 +1,5 @@
+# Cloudflare Pages project metadata (Git 集成以 Dashboard 为准)
+# 本地/备用直传：npm run pages:deploy
+name = "perler-beads"
+compatibility_date = "2025-08-01"
+pages_build_output_dir = "out"
