@@ -35,7 +35,6 @@ import {
 import React, {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -145,6 +144,8 @@ type ShapeTool = "line" | "rectangle" | "ellipse" | "select";
 const BASE_CELL_SIZE = 22;
 const MIN_ZOOM = 0.18;
 const MAX_ZOOM = 8;
+/** Pixel-delta multiplier for exponential wheel zoom (mouse notches + trackpad). */
+const WHEEL_ZOOM_SENSITIVITY = 0.0018;
 const MINOR_GRID_ZOOM = 0.42;
 const EDITOR_ACCENT = "#b43e2b";
 const SHAPE_TOOLS = new Set<EditorTool>(["line", "rectangle", "ellipse", "select"]);
@@ -756,6 +757,26 @@ export default function PixelEditorWorkspace({
     setCameraVersion((value) => value + 1);
   }, []);
 
+  // Native non-passive wheel listener so preventDefault reliably blocks page scroll
+  // and plain wheel (not only Ctrl/Meta) zooms toward the cursor.
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = viewport.getBoundingClientRect();
+      let delta = event.deltaY;
+      if (event.deltaMode === 1) delta *= 16;
+      else if (event.deltaMode === 2) delta *= rect.height;
+      const factor = Math.exp(-delta * WHEEL_ZOOM_SENSITIVITY);
+      zoomAt(cameraRef.current.zoom * factor, event.clientX - rect.left, event.clientY - rect.top);
+    };
+
+    viewport.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handleWheel);
+  }, [zoomAt]);
+
   const pointFromClient = useCallback((clientX: number, clientY: number): CellPoint | null => {
     const rect = interactionCanvasRef.current?.getBoundingClientRect();
     if (!rect) return null;
@@ -1270,12 +1291,7 @@ export default function PixelEditorWorkspace({
             <button type="button" className={symmetryHorizontal ? "is-active" : ""} onClick={() => setSymmetryHorizontal((value) => !value)}>水平对称</button>
             <button type="button" className={symmetryVertical ? "is-active" : ""} onClick={() => setSymmetryVertical((value) => !value)}>垂直对称</button>
           </div>
-          <div ref={viewportRef} className="pixel-editor-viewport" onWheel={(event: ReactWheelEvent<HTMLDivElement>) => {
-            if (!event.ctrlKey && !event.metaKey) return;
-            event.preventDefault();
-            const rect = event.currentTarget.getBoundingClientRect();
-            zoomAt(cameraRef.current.zoom * (event.deltaY > 0 ? 0.88 : 1.14), event.clientX - rect.left, event.clientY - rect.top);
-          }}>
+          <div ref={viewportRef} className="pixel-editor-viewport" style={{ touchAction: "none" }}>
             <canvas ref={gridCanvasRef} className="pixel-editor-layer pixel-editor-grid-layer" aria-hidden="true" />
             <canvas ref={contentCanvasRef} className="pixel-editor-layer pixel-editor-content-layer" aria-hidden="true" />
             <canvas
@@ -1310,7 +1326,7 @@ export default function PixelEditorWorkspace({
             }} />
           </div>
           <div className="pixel-editor-statusbar"><span>{toolLabel(tool)}</span><span ref={cursorLabelRef}>行 {activeCell.row + 1} · 列 {activeCell.col + 1}</span><span>选区 {selectionCount || "—"}</span><span role="status" aria-live="polite">{statusMessage}</span><div className="pixel-editor-zoom"><button type="button" onClick={() => zoomAt(cameraRef.current.zoom / 1.2)} aria-label="缩小"><ZoomOut className="h-4 w-4" /></button><button type="button" onClick={() => zoomAt(cameraRef.current.previousZoom)}>{Math.round(cameraRef.current.zoom * 100)}%</button><button type="button" onClick={() => zoomAt(cameraRef.current.zoom * 1.2)} aria-label="放大"><ZoomIn className="h-4 w-4" /></button></div></div>
-          <span id="pixel-editor-canvas-help" className="sr-only">方向键移动活动格；Enter 或空格绘制；Shift 加方向键扩展选择；Control A、X、C、V 管理选区；Escape 取消。</span>
+          <span id="pixel-editor-canvas-help" className="sr-only">滚轮缩放画布；方向键移动活动格；Enter 或空格绘制；Shift 加方向键扩展选择；Control A、X、C、V 管理选区；Escape 取消。</span>
         </div>
 
         <aside className="pixel-editor-inspector">
