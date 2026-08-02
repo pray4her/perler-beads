@@ -1,4 +1,4 @@
-import { transparentColorData } from './pixelEditingUtils';
+import { transparentColorData, TRANSPARENT_KEY } from './pixelEditingUtils';
 
 // 定义像素化模式
 export enum PixelationMode {
@@ -8,6 +8,24 @@ export enum PixelationMode {
 
 // 定义色号系统类型
 export type ColorSystem = 'MARD' | 'COCO' | '漫漫' | '盼盼' | '咪小窝';
+
+/** 默认横轴切割数量：中大型底稿的常用甜点区 */
+export const DEFAULT_GRANULARITY = 80;
+
+/** 默认相似色合并阈值（Oklab×100）。略高于旧值 30，优先减少碎色 */
+export const DEFAULT_SIMILARITY_THRESHOLD = 32;
+
+/** 稀有色占比低于此值时并入邻近高频色（约 0.4%） */
+export const RARE_COLOR_MIN_RATIO = 0.004;
+
+/** 稀有色绝对数量下限（同时满足占比与绝对数量才清理） */
+export const RARE_COLOR_MIN_ABSOLUTE = 3;
+
+/** 去噪时视为「孤立岛」的最大连通像素数 */
+export const DESPECKLE_MAX_ISLAND_SIZE = 2;
+
+/** Dominant 模式在大格内的 RGB 分桶步进（抑制抗锯齿碎色） */
+const DOMINANT_BUCKET_STEP = 8;
 
 // --- 必要的类型定义 ---
 export interface RgbColor {
@@ -32,6 +50,13 @@ export interface MappedPixel {
   key: string;
   color: string;
   isExternal?: boolean;
+}
+
+export interface PostProcessOptions {
+  similarityThreshold: number;
+  rareColorMinRatio?: number;
+  rareColorMinAbsolute?: number;
+  despeckleMaxIslandSize?: number;
 }
 
 // --- 辅助函数 ---
@@ -99,6 +124,35 @@ export function colorDistance(rgb1: RgbColor, rgb2: RgbColor): number {
   return Math.sqrt(dl * dl + da * da + db * db) * 100;
 }
 
+/**
+ * 亮度差较大时收紧合并阈值，避免轮廓/阴影被错误并入邻近色。
+ */
+export function effectiveMergeThreshold(
+  rgb1: RgbColor,
+  rgb2: RgbColor,
+  baseThreshold: number
+): number {
+  const oklab1 = getOklabColor(rgb1);
+  const oklab2 = getOklabColor(rgb2);
+  const lumDiff = Math.abs(oklab1.l - oklab2.l);
+
+  if (lumDiff >= 0.35) return baseThreshold * 0.45;
+  if (lumDiff >= 0.22) return baseThreshold * 0.7;
+  return baseThreshold;
+}
+
+function bucketRgbChannel(value: number, step: number): number {
+  return Math.min(255, Math.round(value / step) * step);
+}
+
+function bucketRgb(rgb: RgbColor, step: number): RgbColor {
+  return {
+    r: bucketRgbChannel(rgb.r, step),
+    g: bucketRgbChannel(rgb.g, step),
+    b: bucketRgbChannel(rgb.b, step),
+  };
+}
+
 // 查找最接近的颜色
 export function findClosestPaletteColor(
   targetRgb: RgbColor,
@@ -124,18 +178,274 @@ export function findClosestPaletteColor(
   return closestColor;
 }
 
+function isBeadCell(cell: MappedPixel | undefined | null): cell is MappedPixel {
+  return Boolean(cell && cell.key && !cell.isExternal && cell.key !== TRANSPARENT_KEY);
+}
+
+function cloneGrid(grid: MappedPixel[][]): MappedPixel[][] {
+  return grid.map((row) => row.map((cell) => ({ ...cell })));
+}
+
+function buildPaletteMaps(palette: PaletteColor[]) {
+  const keyToRgb = new Map<string, RgbColor>();
+  const keyToColor = new Map<string, PaletteColor>();
+  for (const color of palette) {
+    keyToRgb.set(color.key, color.rgb);
+    keyToColor.set(color.key, color);
+  }
+  return { keyToRgb, keyToColor };
+}
+
+function countNonExternalCells(grid: MappedPixel[][]): { counts: Map<string, number>; total: number } {
+  const counts = new Map<string, number>();
+  let total = 0;
+  for (const row of grid) {
+    for (const cell of row) {
+      if (!isBeadCell(cell)) continue;
+      counts.set(cell.key, (counts.get(cell.key) || 0) + 1);
+      total++;
+    }
+  }
+  return { counts, total };
+}
+
+function replaceKeyInGrid(
+  grid: MappedPixel[][],
+  fromKey: string,
+  toColor: PaletteColor
+): void {
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r];
+    for (let c = 0; c < row.length; c++) {
+      if (row[c].key === fromKey) {
+        row[c] = {
+          key: toColor.key,
+          color: toColor.hex,
+          isExternal: false,
+        };
+      }
+    }
+  }
+}
+
+/**
+ * 按出现频率合并相似色：高频色吸收距离小于阈值的低频色。
+ * 亮度差大时使用更严阈值，保护描边对比。
+ */
+export function mergeSimilarColorsByFrequency(
+  grid: MappedPixel[][],
+  palette: PaletteColor[],
+  threshold: number
+): MappedPixel[][] {
+  if (threshold <= 0) return cloneGrid(grid);
+
+  const result = cloneGrid(grid);
+  const { keyToRgb, keyToColor } = buildPaletteMaps(palette);
+  const { counts } = countNonExternalCells(result);
+  const colorsByFrequency = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([key]) => key);
+
+  const replacedColors = new Set<string>();
+
+  for (let i = 0; i < colorsByFrequency.length; i++) {
+    const currentKey = colorsByFrequency[i];
+    if (replacedColors.has(currentKey)) continue;
+
+    const currentRgb = keyToRgb.get(currentKey);
+    const currentColor = keyToColor.get(currentKey);
+    if (!currentRgb || !currentColor) continue;
+
+    for (let j = i + 1; j < colorsByFrequency.length; j++) {
+      const lowerFreqKey = colorsByFrequency[j];
+      if (replacedColors.has(lowerFreqKey)) continue;
+
+      const lowerFreqRgb = keyToRgb.get(lowerFreqKey);
+      if (!lowerFreqRgb) continue;
+
+      const dist = colorDistance(currentRgb, lowerFreqRgb);
+      const mergeLimit = effectiveMergeThreshold(currentRgb, lowerFreqRgb, threshold);
+      if (dist < mergeLimit) {
+        replacedColors.add(lowerFreqKey);
+        replaceKeyInGrid(result, lowerFreqKey, currentColor);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 将过少出现的颜色并入最近的高频色，减少「一颗一色」杂色。
+ */
+export function cleanupRareColors(
+  grid: MappedPixel[][],
+  palette: PaletteColor[],
+  options: {
+    minRatio?: number;
+    minAbsolute?: number;
+  } = {}
+): MappedPixel[][] {
+  const minRatio = options.minRatio ?? RARE_COLOR_MIN_RATIO;
+  const minAbsolute = options.minAbsolute ?? RARE_COLOR_MIN_ABSOLUTE;
+  const result = cloneGrid(grid);
+  const { keyToRgb, keyToColor } = buildPaletteMaps(palette);
+  const { counts, total } = countNonExternalCells(result);
+  if (total === 0) return result;
+
+  const minCount = Math.max(minAbsolute, Math.ceil(total * minRatio));
+  const rareKeys = [...counts.entries()]
+    .filter(([, count]) => count < minCount)
+    .sort((a, b) => a[1] - b[1])
+    .map(([key]) => key);
+
+  if (rareKeys.length === 0) return result;
+
+  const keepKeys = [...counts.entries()]
+    .filter(([key, count]) => count >= minCount && !rareKeys.includes(key))
+    .map(([key]) => key);
+
+  if (keepKeys.length === 0) return result;
+
+  for (const rareKey of rareKeys) {
+    const rareRgb = keyToRgb.get(rareKey);
+    if (!rareRgb) continue;
+
+    let bestKey = keepKeys[0];
+    let bestDist = Infinity;
+    for (const keepKey of keepKeys) {
+      const keepRgb = keyToRgb.get(keepKey);
+      if (!keepRgb) continue;
+      const dist = colorDistance(rareRgb, keepRgb);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestKey = keepKey;
+      }
+    }
+
+    const target = keyToColor.get(bestKey);
+    if (target) {
+      replaceKeyInGrid(result, rareKey, target);
+      // 已并入的稀有色不再作为后续目标，但 keepKeys 维持稳定集合即可
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 去除小连通域噪点：孤立/极小色块替换为邻域众数色。
+ * 保留与邻域感知距离较大的细节（描边、高光）。
+ */
+export function despeckleIsolatedPixels(
+  grid: MappedPixel[][],
+  palette: PaletteColor[],
+  maxIslandSize: number = DESPECKLE_MAX_ISLAND_SIZE
+): MappedPixel[][] {
+  if (maxIslandSize <= 0 || grid.length === 0) return cloneGrid(grid);
+
+  const result = cloneGrid(grid);
+  const rows = result.length;
+  const cols = result[0]?.length ?? 0;
+  if (cols === 0) return result;
+
+  const { keyToRgb, keyToColor } = buildPaletteMaps(palette);
+  const visited: boolean[][] = Array.from({ length: rows }, () => Array(cols).fill(false));
+  const dirs: Array<[number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (visited[r][c] || !isBeadCell(result[r][c])) continue;
+
+      const key = result[r][c].key;
+      const queue: Array<[number, number]> = [[r, c]];
+      const component: Array<[number, number]> = [];
+      visited[r][c] = true;
+
+      while (queue.length > 0) {
+        const [cr, cc] = queue.pop()!;
+        component.push([cr, cc]);
+        for (const [dr, dc] of dirs) {
+          const nr = cr + dr;
+          const nc = cc + dc;
+          if (nr < 0 || nc < 0 || nr >= rows || nc >= cols) continue;
+          if (visited[nr][nc]) continue;
+          if (!isBeadCell(result[nr][nc]) || result[nr][nc].key !== key) continue;
+          visited[nr][nc] = true;
+          queue.push([nr, nc]);
+        }
+      }
+
+      if (component.length > maxIslandSize) continue;
+
+      const neighborCounts = new Map<string, number>();
+      for (const [cr, cc] of component) {
+        for (const [dr, dc] of dirs) {
+          const nr = cr + dr;
+          const nc = cc + dc;
+          if (nr < 0 || nc < 0 || nr >= rows || nc >= cols) continue;
+          const neighbor = result[nr][nc];
+          if (!isBeadCell(neighbor) || neighbor.key === key) continue;
+          neighborCounts.set(neighbor.key, (neighborCounts.get(neighbor.key) || 0) + 1);
+        }
+      }
+
+      if (neighborCounts.size === 0) continue;
+
+      let majorityKey = "";
+      let majorityCount = -1;
+      for (const [neighborKey, count] of neighborCounts) {
+        if (count > majorityCount) {
+          majorityCount = count;
+          majorityKey = neighborKey;
+        }
+      }
+
+      const islandRgb = keyToRgb.get(key);
+      const majorityRgb = keyToRgb.get(majorityKey);
+      const majorityColor = keyToColor.get(majorityKey);
+      if (!islandRgb || !majorityRgb || !majorityColor) continue;
+
+      // 与邻域差异很大时保留（通常是描边/关键细节）
+      if (colorDistance(islandRgb, majorityRgb) > 28) continue;
+
+      for (const [cr, cc] of component) {
+        result[cr][cc] = {
+          key: majorityColor.key,
+          color: majorityColor.hex,
+          isExternal: false,
+        };
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 映射后处理流水线：相似色合并 → 稀有色清理 → 孤立像素去噪。
+ */
+export function postProcessMappedGrid(
+  grid: MappedPixel[][],
+  palette: PaletteColor[],
+  options: PostProcessOptions
+): MappedPixel[][] {
+  const merged = mergeSimilarColorsByFrequency(grid, palette, options.similarityThreshold);
+  const rareCleaned = cleanupRareColors(merged, palette, {
+    minRatio: options.rareColorMinRatio,
+    minAbsolute: options.rareColorMinAbsolute,
+  });
+  return despeckleIsolatedPixels(
+    rareCleaned,
+    palette,
+    options.despeckleMaxIslandSize ?? DESPECKLE_MAX_ISLAND_SIZE
+  );
+}
 
 // --- 核心像素化计算逻辑 ---
 
 /**
  * 计算图像指定区域的代表色（根据所选模式）
- * @param imageData 包含像素数据的 ImageData 对象
- * @param startX 区域起始 X 坐标
- * @param startY 区域起始 Y 坐标
- * @param width 区域宽度
- * @param height 区域高度
- * @param mode 计算模式 ('dominant' 或 'average')
- * @returns 代表色的 RGB 对象，或 null（如果区域无效或全透明）
  */
 function calculateCellRepresentativeColor(
     imageData: ImageData,
@@ -152,6 +462,10 @@ function calculateCellRepresentativeColor(
     const colorCountsInCell: { [key: string]: number } = {};
     let dominantColorRgb: RgbColor | null = null;
     let maxCount = 0;
+
+    // 格内像素较多时分桶，避免抗锯齿产生大量唯一 RGB 导致主色不稳定
+    const useBuckets = mode === PixelationMode.Dominant && width * height >= 16;
+    const bucketStep = DOMINANT_BUCKET_STEP;
 
     const endX = startX + width;
     const endY = startY + height;
@@ -173,11 +487,12 @@ function calculateCellRepresentativeColor(
                 gSum += g;
                 bSum += b;
             } else { // Dominant mode
-                const colorKey = `${r},${g},${b}`;
+                const sample = useBuckets ? bucketRgb({ r, g, b }, bucketStep) : { r, g, b };
+                const colorKey = `${sample.r},${sample.g},${sample.b}`;
                 colorCountsInCell[colorKey] = (colorCountsInCell[colorKey] || 0) + 1;
                 if (colorCountsInCell[colorKey] > maxCount) {
                     maxCount = colorCountsInCell[colorKey];
-                    dominantColorRgb = { r, g, b };
+                    dominantColorRgb = sample;
                 }
             }
         }
@@ -200,15 +515,6 @@ function calculateCellRepresentativeColor(
 
 /**
  * 根据原始图像数据、网格尺寸、调色板和模式计算像素化网格数据。
- * @param originalCtx 原始图像的 Canvas 2D Context
- * @param imgWidth 原始图像宽度
- * @param imgHeight 原始图像高度
- * @param N 网格横向数量
- * @param M 网格纵向数量
- * @param palette 当前使用的调色板
- * @param mode 像素化模式 (Dominant/Average)
- * @param t1FallbackColor T1 或其他备用颜色数据
- * @returns 计算后的 MappedPixel 网格数据
  */
 export function calculatePixelGrid(
     originalCtx: CanvasRenderingContext2D,
@@ -268,4 +574,4 @@ export function calculatePixelGrid(
     }
     console.log(`Pixel grid calculation complete for mode: ${mode}`);
     return mappedData;
-} 
+}

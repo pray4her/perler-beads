@@ -3,7 +3,11 @@ import AxeBuilder from "@axe-core/playwright";
 
 test("home page has no serious accessibility violations", async ({ page }) => {
   await page.goto("/");
-  await expect(page).toHaveTitle("拼豆底稿生成器 | Perler Beads Generator");
+  await expect(page).toHaveTitle("拼豆底稿生成器");
+  await expect(page.getByRole("heading", { name: "把图片变成真正能照着拼的底稿", exact: true })).toBeVisible();
+  await expect(page.getByText("图片仅在本机处理", { exact: true })).toBeVisible();
+  await expect(page.locator('script[src*="busuanzi"]')).toHaveCount(0);
+  await expect(page.locator(".support-rail")).toHaveCount(0);
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   expect(results.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
 });
@@ -11,16 +15,35 @@ test("home page has no serious accessibility violations", async ({ page }) => {
 test("sample opens the keyboard-accessible editor and updates preview text", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "载入示例", exact: true }).click();
+  await expect(page.getByRole("button", { name: "进入编辑工作台", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "进入专心模式", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "下载拼豆图纸", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "进入编辑工作台", exact: true }).click();
   const grid = page.getByRole("grid", { name: "可编辑拼豆网格", exact: true });
   await grid.focus();
   await grid.press("ArrowRight");
   await grid.press("Enter");
   await expect(page.getByRole("button", { name: "上一步", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "生成参数", exact: true }).click();
+  await expect(page.getByText("目标颜色数量", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "自动建议", exact: true })).toBeVisible();
+  await expect(page.getByLabel("目标颜色数量", { exact: true })).toHaveValue(/\d+/);
+  await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "预览", exact: true }).click();
   const title = page.getByLabel("作品标题", { exact: true });
   await title.fill("我的拼豆作品");
   await expect(title).toHaveValue("我的拼豆作品");
   const dimensions = await page.evaluate(() => ({ width: window.innerWidth, scrollWidth: document.documentElement.scrollWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.width);
+});
+
+test("finishing the editor returns home without discarding the current pattern", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "载入示例", exact: true }).click();
+  await page.getByRole("button", { name: "进入编辑工作台", exact: true }).click();
+  await page.getByRole("button", { name: "完成", exact: true }).click();
+  const hero = page.locator(".home-hero");
+  await expect(hero.getByRole("button", { name: "继续当前底稿", exact: true })).toBeVisible();
+  await hero.getByRole("button", { name: "继续当前底稿", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "调整底稿", exact: true })).toBeVisible();
 });

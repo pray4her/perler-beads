@@ -111,6 +111,8 @@ interface PixelEditorWorkspaceProps {
   onExit: () => void;
   onDownloadPattern: () => void;
   onEnterFocus?: (projectId: string, revision: number) => void;
+  onOpenGenerationParams?: () => void;
+  onOpenCustomPalette?: () => void;
 }
 
 interface Camera {
@@ -128,6 +130,8 @@ interface Gesture {
   moved: boolean;
   fromPending: boolean;
   patches: Map<number, CellPatch>;
+  /** Every cell under the stroke, including no-op same-color hits (preview only). */
+  touched: Set<number>;
   pan?: { x: number; y: number; cameraX: number; cameraY: number };
 }
 
@@ -149,6 +153,31 @@ const WHEEL_ZOOM_SENSITIVITY = 0.0018;
 const MINOR_GRID_ZOOM = 0.42;
 const EDITOR_ACCENT = "#b43e2b";
 const SHAPE_TOOLS = new Set<EditorTool>(["line", "rectangle", "ellipse", "select"]);
+
+/** Snap a CSS length/position onto an integer device-pixel boundary (MDN crisp-line practice). */
+function snapDevice(value: number, dpr: number): number {
+  return Math.round(value * dpr) / dpr;
+}
+
+/** CSS coordinate through the center of a device pixel for 1-device-px strokes. */
+function hairline(value: number, dpr: number): number {
+  return (Math.round(value * dpr) + 0.5) / dpr;
+}
+
+/**
+ * Shared paint/hit-test metrics. Snapping cellSize + origin keeps adjacent grid lines
+ * equally spaced and 1px strokes from anti-aliasing unevenly across fractional zooms.
+ */
+function getViewTransform(camera: Camera, dpr: number) {
+  const safeDpr = Math.max(1, dpr);
+  return {
+    dpr: safeDpr,
+    cellSize: Math.max(1 / safeDpr, snapDevice(BASE_CELL_SIZE * camera.zoom, safeDpr)),
+    originX: snapDevice(camera.x, safeDpr),
+    originY: snapDevice(camera.y, safeDpr),
+    lineWidth: 1 / safeDpr,
+  };
+}
 
 const toolDefinitions: Array<{ id: EditorTool; label: string; shortcut: string; icon: React.ComponentType<{ className?: string }> }> = [
   { id: "move", label: "移动", shortcut: "V", icon: Hand },
@@ -202,20 +231,22 @@ function drawBlankCell(
   context.fillRect(x, y, cellSize, cellSize);
 }
 
-/** Draw collapsed top + left 1px lines; adjacent cells never double-paint a border. */
+/** Draw collapsed top + left hairlines; adjacent cells never double-paint a border. */
 function drawCellGridLines(
   context: CanvasRenderingContext2D,
   point: CellPoint,
   camera: Camera,
   cellSize: number,
   zoom: number,
+  dpr: number,
 ) {
   if (zoom < MINOR_GRID_ZOOM && point.row % 5 !== 0 && point.col % 5 !== 0) return;
-  const x = Math.round(camera.x + point.col * cellSize);
-  const y = Math.round(camera.y + point.row * cellSize);
+  const x = snapDevice(camera.x + point.col * cellSize, dpr);
+  const y = snapDevice(camera.y + point.row * cellSize, dpr);
+  const stroke = 1 / dpr;
   context.fillStyle = point.row % 5 === 0 || point.col % 5 === 0 ? "rgba(20,20,19,.42)" : "rgba(20,20,19,.18)";
-  context.fillRect(x, y, cellSize, 1);
-  context.fillRect(x, y, 1, cellSize);
+  context.fillRect(x, y, cellSize, stroke);
+  context.fillRect(x, y, stroke, cellSize);
 }
 
 function drawCell(
@@ -226,6 +257,7 @@ function drawCell(
   cellSize: number,
   zoom: number,
   showGrid: boolean,
+  dpr = 1,
 ) {
   if (color) {
     context.fillStyle = color;
@@ -233,7 +265,7 @@ function drawCell(
   } else {
     drawBlankCell(context, point, camera, cellSize);
   }
-  if (showGrid) drawCellGridLines(context, point, camera, cellSize, zoom);
+  if (showGrid) drawCellGridLines(context, point, camera, cellSize, zoom, dpr);
 }
 
 function addExposedCellEdges(
@@ -252,6 +284,8 @@ function addExposedCellEdges(
   if (!has(point.row, point.col - 1)) { context.moveTo(x, y + cellSize); context.lineTo(x, y); }
 }
 
+// Kept for regression contract + shared outline path; stroke overlay inlines a tinted variant.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- referenced by check-frontend-regressions.mjs
 function drawCellSetOutline(
   context: CanvasRenderingContext2D,
   points: CellPoint[],
@@ -281,11 +315,32 @@ function renderPaintStrokeOverlay(
   cellSize: number,
   color: string,
 ) {
+  if (paintedKeys.size === 0) return;
   const points = Array.from(paintedKeys, (key) => {
     const [row, col] = key.split(",").map(Number);
     return { row, col };
   });
-  drawCellSetOutline(context, points, camera, cellSize, `${color}88`);
+  const keys = new Set(points.map((point) => `${point.row},${point.col}`));
+  context.save();
+  // Intent color first (may vanish on same-color cells).
+  context.fillStyle = color.length === 7 ? `${color}66` : color;
+  for (const point of points) {
+    context.fillRect(camera.x + point.col * cellSize, camera.y + point.row * cellSize, cellSize, cellSize);
+  }
+  // Accent wash on top so same-color targets still read as "in stroke".
+  context.fillStyle = "rgba(180,62,43,.20)";
+  for (const point of points) {
+    context.fillRect(camera.x + point.col * cellSize, camera.y + point.row * cellSize, cellSize, cellSize);
+  }
+  context.beginPath();
+  for (const point of points) addExposedCellEdges(context, point, keys, camera, cellSize);
+  context.strokeStyle = "rgba(250,249,245,.96)";
+  context.lineWidth = 3;
+  context.stroke();
+  context.strokeStyle = EDITOR_ACCENT;
+  context.lineWidth = 1;
+  context.stroke();
+  context.restore();
 }
 
 export default function PixelEditorWorkspace({
@@ -296,6 +351,8 @@ export default function PixelEditorWorkspace({
   onExit,
   onDownloadPattern,
   onEnterFocus,
+  onOpenGenerationParams,
+  onOpenCustomPalette,
 }: PixelEditorWorkspaceProps) {
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
@@ -331,8 +388,8 @@ export default function PixelEditorWorkspace({
   const referenceBitmapRef = useRef<ImageBitmap | null>(null);
   const cursorLabelRef = useRef<HTMLSpanElement>(null);
 
-  const [tool, setTool] = useState<EditorTool>("brush");
-  const [toolbarIndex, setToolbarIndex] = useState(1);
+  const [tool, setTool] = useState<EditorTool>("move");
+  const [toolbarIndex, setToolbarIndex] = useState(0);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("color");
   const [activeCell, setActiveCell] = useState<CellPoint>({ row: 0, col: 0 });
   const [selection, setSelection] = useState<SelectionMask | null>(null);
@@ -415,8 +472,10 @@ export default function PixelEditorWorkspace({
       context.imageSmoothingEnabled = false;
     }
 
-    const camera = cameraRef.current;
-    const cellSize = BASE_CELL_SIZE * camera.zoom;
+    const liveCamera = cameraRef.current;
+    const { cellSize, originX, originY, lineWidth } = getViewTransform(liveCamera, dpr);
+    // Paint with snapped origin so cells and grid share the same device-pixel lattice.
+    const camera: Camera = { ...liveCamera, x: originX, y: originY };
     const startCol = Math.max(0, Math.floor(-camera.x / cellSize));
     const startRow = Math.max(0, Math.floor(-camera.y / cellSize));
     const endCol = Math.min(current.width - 1, Math.ceil((viewWidth - camera.x) / cellSize));
@@ -495,30 +554,34 @@ export default function PixelEditorWorkspace({
 
     if (gridVisible) {
       const interval = Math.max(1, current.display.majorGridInterval);
+      const gridTop = camera.y + startRow * cellSize;
+      const gridBottom = camera.y + (endRow + 1) * cellSize;
+      const gridLeft = camera.x + startCol * cellSize;
+      const gridRight = camera.x + (endCol + 1) * cellSize;
       gridContext.beginPath();
       for (let col = startCol; col <= endCol + 1; col++) {
-        const x = Math.round(camera.x + col * cellSize) + 0.5;
-        gridContext.moveTo(x, camera.y + startRow * cellSize);
-        gridContext.lineTo(x, camera.y + (endRow + 1) * cellSize);
+        const x = hairline(camera.x + col * cellSize, dpr);
+        gridContext.moveTo(x, gridTop);
+        gridContext.lineTo(x, gridBottom);
       }
       for (let row = startRow; row <= endRow + 1; row++) {
-        const y = Math.round(camera.y + row * cellSize) + 0.5;
-        gridContext.moveTo(camera.x + startCol * cellSize, y);
-        gridContext.lineTo(camera.x + (endCol + 1) * cellSize, y);
+        const y = hairline(camera.y + row * cellSize, dpr);
+        gridContext.moveTo(gridLeft, y);
+        gridContext.lineTo(gridRight, y);
       }
       gridContext.strokeStyle = "rgba(20,20,19,.18)";
-      gridContext.lineWidth = 1;
+      gridContext.lineWidth = lineWidth;
       gridContext.stroke();
       gridContext.beginPath();
       for (let col = Math.ceil(startCol / interval) * interval; col <= endCol + 1; col += interval) {
-        const x = Math.round(camera.x + col * cellSize) + 0.5;
-        gridContext.moveTo(x, camera.y + startRow * cellSize);
-        gridContext.lineTo(x, camera.y + (endRow + 1) * cellSize);
+        const x = hairline(camera.x + col * cellSize, dpr);
+        gridContext.moveTo(x, gridTop);
+        gridContext.lineTo(x, gridBottom);
       }
       for (let row = Math.ceil(startRow / interval) * interval; row <= endRow + 1; row += interval) {
-        const y = Math.round(camera.y + row * cellSize) + 0.5;
-        gridContext.moveTo(camera.x + startCol * cellSize, y);
-        gridContext.lineTo(camera.x + (endCol + 1) * cellSize, y);
+        const y = hairline(camera.y + row * cellSize, dpr);
+        gridContext.moveTo(gridLeft, y);
+        gridContext.lineTo(gridRight, y);
       }
       gridContext.strokeStyle = "rgba(20,20,19,.42)";
       gridContext.stroke();
@@ -538,19 +601,24 @@ export default function PixelEditorWorkspace({
       }
     }
     gridContext.strokeStyle = "rgba(20,20,19,.58)";
-    gridContext.lineWidth = 1;
-    gridContext.strokeRect(Math.round(camera.x) + 0.5, Math.round(camera.y) + 0.5, current.width * cellSize, current.height * cellSize);
+    gridContext.lineWidth = lineWidth;
+    gridContext.strokeRect(
+      hairline(camera.x, dpr),
+      hairline(camera.y, dpr),
+      current.width * cellSize,
+      current.height * cellSize,
+    );
 
     if (current.board.columns > 0 && current.board.rows > 0) {
       gridContext.save();
       gridContext.strokeStyle = "rgba(180,62,43,.65)";
-      gridContext.lineWidth = 1.5;
+      gridContext.lineWidth = 2 / dpr;
       for (let col = current.board.columns; col < current.width; col += current.board.columns) {
-        const x = camera.x + col * cellSize;
+        const x = hairline(camera.x + col * cellSize, dpr);
         gridContext.beginPath(); gridContext.moveTo(x, camera.y); gridContext.lineTo(x, camera.y + current.height * cellSize); gridContext.stroke();
       }
       for (let row = current.board.rows; row < current.height; row += current.board.rows) {
-        const y = camera.y + row * cellSize;
+        const y = hairline(camera.y + row * cellSize, dpr);
         gridContext.beginPath(); gridContext.moveTo(camera.x, y); gridContext.lineTo(camera.x + current.width * cellSize, y); gridContext.stroke();
       }
       gridContext.restore();
@@ -561,18 +629,25 @@ export default function PixelEditorWorkspace({
       const y = camera.y + point.row * cellSize;
       interaction.fillStyle = fill;
       interaction.fillRect(x, y, cellSize, cellSize);
+      const inset = 1.5 / dpr;
+      const halo = 3 / dpr;
       interaction.strokeStyle = "rgba(250,249,245,.96)";
-      interaction.lineWidth = 3;
-      interaction.strokeRect(x + 1.5, y + 1.5, cellSize - 3, cellSize - 3);
+      interaction.lineWidth = halo;
+      interaction.strokeRect(x + inset, y + inset, cellSize - inset * 2, cellSize - inset * 2);
       interaction.strokeStyle = stroke;
-      interaction.lineWidth = 1;
-      interaction.strokeRect(x + 1.5, y + 1.5, cellSize - 3, cellSize - 3);
+      interaction.lineWidth = lineWidth;
+      interaction.strokeRect(
+        hairline(x + inset, dpr),
+        hairline(y + inset, dpr),
+        cellSize - inset * 2,
+        cellSize - inset * 2,
+      );
     };
     if (selection) {
       interaction.save();
       interaction.fillStyle = "rgba(180,62,43,.10)";
       interaction.strokeStyle = EDITOR_ACCENT;
-      interaction.lineWidth = 1;
+      interaction.lineWidth = lineWidth;
       interaction.setLineDash([6, 4]);
       for (let index = 0; index < selection.mask.length; index++) {
         if (!selection.mask[index]) continue;
@@ -727,7 +802,8 @@ export default function PixelEditorWorkspace({
     const columns = bounds ? bounds.endCol - bounds.startCol + 1 : document.width;
     const rows = bounds ? bounds.endRow - bounds.startRow + 1 : document.height;
     const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min((viewWidth - 96) / (columns * BASE_CELL_SIZE), (viewHeight - 96) / (rows * BASE_CELL_SIZE))));
-    const cellSize = BASE_CELL_SIZE * zoom;
+    const dpr = Math.max(1, typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1);
+    const { cellSize } = getViewTransform({ x: 0, y: 0, zoom, previousZoom: zoom }, dpr);
     const startCol = bounds?.startCol ?? 0;
     const startRow = bounds?.startRow ?? 0;
     cameraRef.current = {
@@ -780,10 +856,10 @@ export default function PixelEditorWorkspace({
   const pointFromClient = useCallback((clientX: number, clientY: number): CellPoint | null => {
     const rect = interactionCanvasRef.current?.getBoundingClientRect();
     if (!rect) return null;
-    const camera = cameraRef.current;
-    const cellSize = BASE_CELL_SIZE * camera.zoom;
-    const col = Math.floor((clientX - rect.left - camera.x) / cellSize);
-    const row = Math.floor((clientY - rect.top - camera.y) / cellSize);
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const { cellSize, originX, originY } = getViewTransform(cameraRef.current, dpr);
+    const col = Math.floor((clientX - rect.left - originX) / cellSize);
+    const row = Math.floor((clientY - rect.top - originY) / cellSize);
     if (row < 0 || row >= document.height || col < 0 || col >= document.width) return null;
     return { row, col };
   }, [document.height, document.width]);
@@ -795,6 +871,8 @@ export default function PixelEditorWorkspace({
     if (normalizedPoint.row < 0 || normalizedPoint.row >= document.height || normalizedPoint.col < 0 || normalizedPoint.col >= document.width) return;
     const index = normalizedPoint.row * document.width + normalizedPoint.col;
     if (selection && !selection.mask[index]) return;
+    // Always record for stroke preview; only enqueue a patch when color actually changes.
+    gesture.touched.add(index);
     const before = document.cells[index];
     const existing = gesture.patches.get(index);
     if (existing) existing.after = paletteIndex;
@@ -811,7 +889,10 @@ export default function PixelEditorWorkspace({
       }
     }
     gesture.last = point;
-    previewPointsRef.current = Array.from(gesture.patches.values()).map((patch) => ({ row: Math.floor(patch.index / document.width), col: patch.index % document.width }));
+    previewPointsRef.current = Array.from(gesture.touched, (index) => ({
+      row: Math.floor(index / document.width),
+      col: index % document.width,
+    }));
     requestDraw();
   }, [addPatch, brushShape, brushSize, document.height, document.width, requestDraw, selectedPaletteIndex, symmetryCol, symmetryHorizontal, symmetryRow, symmetryVertical]);
 
@@ -891,7 +972,7 @@ export default function PixelEditorWorkspace({
     const shouldPan = event.button === 1 || tool === "move" || spacePressedRef.current;
     if (shouldPan) {
       event.currentTarget.setPointerCapture(event.pointerId);
-      activeGestureRef.current = { pointerId: event.pointerId, tool: "move", start: point ?? activeCell, last: point ?? activeCell, moved: false, fromPending: false, patches: new Map(), pan: { x: event.clientX, y: event.clientY, cameraX: cameraRef.current.x, cameraY: cameraRef.current.y } };
+      activeGestureRef.current = { pointerId: event.pointerId, tool: "move", start: point ?? activeCell, last: point ?? activeCell, moved: false, fromPending: false, patches: new Map(), touched: new Set(), pan: { x: event.clientX, y: event.clientY, cameraX: cameraRef.current.x, cameraY: cameraRef.current.y } };
       return;
     }
     if (!point || event.button !== 0) return;
@@ -928,7 +1009,7 @@ export default function PixelEditorWorkspace({
     const pending = pendingShapeRef.current;
     const fromPending = Boolean(pending && pending.tool === tool);
     const start = fromPending ? pending!.start : point;
-    activeGestureRef.current = { pointerId: event.pointerId, tool, start, last: point, moved: false, fromPending, patches: new Map() };
+    activeGestureRef.current = { pointerId: event.pointerId, tool, start, last: point, moved: false, fromPending, patches: new Map(), touched: new Set() };
     if (tool === "brush" || tool === "eraser") brushSegment(activeGestureRef.current, point);
     else if (SHAPE_TOOLS.has(tool)) previewPointsRef.current = shapePoints(tool as ShapeTool, start, point, event.shiftKey, event.altKey);
     requestDraw();
@@ -1260,6 +1341,12 @@ export default function PixelEditorWorkspace({
           <button type="button" onClick={() => store.redo()} disabled={!snapshot.canRedo} title="重做 Ctrl+Y" aria-label="下一步"><Redo2 className="h-4 w-4" /><span>下一步</span></button>
         </div>
         <div className="pixel-editor-top-actions">
+          {onOpenGenerationParams ? (
+            <button type="button" onClick={onOpenGenerationParams} title="调整生成参数">生成参数</button>
+          ) : null}
+          {onOpenCustomPalette ? (
+            <button type="button" onClick={onOpenCustomPalette} title="管理色板">色板</button>
+          ) : null}
           <button type="button" onClick={() => void saveNow()}><Save className="h-4 w-4" />保存项目</button>
           <button type="button" onClick={() => setInspectorTab("make")}><Download className="h-4 w-4" />导出</button>
           <button type="button" onClick={() => void enterFocus()}><Focus className="h-4 w-4" />专注制作</button>
@@ -1319,7 +1406,8 @@ export default function PixelEditorWorkspace({
               const rect = event.currentTarget.getBoundingClientRect();
               const ratioX = (event.clientX - rect.left) / rect.width;
               const ratioY = (event.clientY - rect.top) / rect.height;
-              const cellSize = BASE_CELL_SIZE * cameraRef.current.zoom;
+              const dpr = Math.max(1, window.devicePixelRatio || 1);
+              const { cellSize } = getViewTransform(cameraRef.current, dpr);
               cameraRef.current.x = viewportSizeRef.current.width / 2 - ratioX * document.width * cellSize;
               cameraRef.current.y = viewportSizeRef.current.height / 2 - ratioY * document.height * cellSize;
               setCameraVersion((value) => value + 1);

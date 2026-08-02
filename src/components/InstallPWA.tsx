@@ -1,60 +1,31 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Download } from 'lucide-react';
+import { Download } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { useInstallPWA } from "@/hooks/useInstallPWA";
 
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+interface InstallPWAProps {
+  className?: string;
+  compact?: boolean;
 }
 
-export default function InstallPWA() {
-  const [supportsPWA, setSupportsPWA] = useState(false);
-  const [promptInstall, setPromptInstall] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstalled, setIsInstalled] = useState(false);
+export default function InstallPWA({ className, compact = false }: InstallPWAProps) {
+  const { canInstall, install } = useInstallPWA();
 
-  useEffect(() => {
-    const handler = (e: BeforeInstallPromptEvent) => {
-      e.preventDefault();
-      setSupportsPWA(true);
-      setPromptInstall(e);
-    };
-
-    window.addEventListener('beforeinstallprompt', handler as EventListener);
-
-    if (window.matchMedia('(display-mode: standalone)').matches) {
-      setIsInstalled(true);
-    }
-
-    return () => window.removeEventListener('beforeinstallprompt', handler as EventListener);
-  }, []);
-
-  const onClick = async (evt: React.MouseEvent) => {
-    evt.preventDefault();
-    if (!promptInstall) {
-      return;
-    }
-    promptInstall.prompt();
-    const { outcome } = await promptInstall.userChoice;
-    if (outcome === 'accepted') {
-      setPromptInstall(null);
-      setSupportsPWA(false);
-    }
-  };
-
-  if (isInstalled || !supportsPWA) {
-    return null;
-  }
+  if (!canInstall) return null;
 
   return (
     <Button
-      className="fixed bottom-6 right-6 z-50 shadow-[var(--shadow-card)]"
-      onClick={onClick}
-      aria-label="安装应用"
+      type="button"
+      variant="outline"
+      size="lg"
+      className={cn("home-nav-install", className)}
+      onClick={install}
+      aria-label="安装拼豆底稿生成器"
     >
-      <Download data-icon="inline-start" />
-      安装应用
+      <Download aria-hidden="true" />
+      {compact ? <span className="sr-only">安装应用</span> : "安装应用"}
     </Button>
   );
 }

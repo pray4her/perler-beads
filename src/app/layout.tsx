@@ -14,9 +14,28 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "拼豆底稿生成器 | Perler Beads Generator",
-  description: "上传图片，调整精细度，一键生成像素画图纸，简单实用的像素画生成工具",
+  applicationName: "拼豆底稿生成器",
+  title: {
+    default: "拼豆底稿生成器",
+    template: "%s | 拼豆底稿生成器",
+  },
+  description: "把图片转换为可编辑、可统计、可照着制作的拼豆底稿。支持常用色号、自定义色板、图纸导出与专心制作，图片仅在本机处理。",
+  keywords: ["拼豆", "拼豆底稿", "像素画", "拼豆图纸", "Perler beads"],
+  category: "工具",
+  referrer: "strict-origin-when-cross-origin",
   manifest: "/manifest.json",
+  openGraph: {
+    type: "website",
+    locale: "zh_CN",
+    siteName: "拼豆底稿生成器",
+    title: "把图片变成真正能照着拼的底稿",
+    description: "自动匹配常用色号，精修、统计、制作，一次完成。图片仅在本机处理。",
+  },
+  twitter: {
+    card: "summary",
+    title: "拼豆底稿生成器",
+    description: "把图片转换成可编辑、可制作的拼豆底稿，图片仅在本机处理。",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -40,8 +59,6 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
 };
 
 export default function RootLayout({
@@ -50,7 +67,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className="">
+    <html lang="zh-CN">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased overflow-x-hidden bg-background text-foreground`}
       >
