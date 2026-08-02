@@ -448,27 +448,10 @@ export default function Home() {
   }, [isMounted]);
 
   const loadExampleImage = useCallback(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 48;
-    canvas.height = 48;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    context.imageSmoothingEnabled = false;
-    context.fillStyle = '#F7F2E8';
-    context.fillRect(0, 0, 48, 48);
-    context.fillStyle = '#C73745';
-    context.fillRect(8, 8, 12, 8);
-    context.fillRect(28, 8, 12, 8);
-    context.fillRect(4, 16, 40, 12);
-    context.fillRect(10, 28, 28, 8);
-    context.fillRect(16, 36, 16, 6);
-    context.fillStyle = '#F0A4B2';
-    context.fillRect(12, 12, 8, 8);
-    context.fillRect(28, 12, 8, 8);
     setPrepareImageSrc(null);
     setIsPrepareSubmitting(false);
     setPrepareSubmitError(null);
-    setOriginalImageSrc(canvas.toDataURL('image/png'));
+    setOriginalImageSrc('/home/OriginalImage1.png');
     setMappedPixelData(null);
     setGridDimensions(null);
     setColorCounts(null);
