@@ -21,6 +21,8 @@ import CompletionCard from '../../components/CompletionCard';
 import { ArrowLeft, Settings } from 'lucide-react';
 import { getColorKeyByHex, ColorSystem } from '../../utils/colorSystemUtils';
 import { Button } from '@/components/ui/button';
+import { createEditorDocument, editorDocumentToGrid } from '@/editor/document';
+import { loadFocusProgress, loadProject, saveFocusProgress, saveProject } from '@/editor/projectStorage';
 
 interface FocusModeState {
   // 当前状态
@@ -63,6 +65,7 @@ export default function FocusMode() {
   // 从localStorage或URL参数获取像素数据
   const [mappedPixelData, setMappedPixelData] = useState<MappedPixel[][] | null>(null);
   const [gridDimensions, setGridDimensions] = useState<{ N: number; M: number } | null>(null);
+  const [focusProject, setFocusProject] = useState<{ id: string; revision: number } | null>(null);
 
   // 专心模式状态
   const [focusState, setFocusState] = useState<FocusModeState>({
@@ -122,59 +125,85 @@ export default function FocusMode() {
     };
   }, [focusState.isPaused]);
 
-  // 从localStorage加载数据
+  // 优先从 IndexedDB 项目加载；没有项目参数时迁移旧 localStorage 数据。
   useEffect(() => {
-    const savedPixelData = localStorage.getItem('focusMode_pixelData');
-    const savedGridDimensions = localStorage.getItem('focusMode_gridDimensions');
-    const savedColorCounts = localStorage.getItem('focusMode_colorCounts');
-    const savedColorSystem = localStorage.getItem('focusMode_selectedColorSystem');
+    let cancelled = false;
+    const applyData = async (pixelData: MappedPixel[][], colorSystem: ColorSystem, project?: { id: string; revision: number }) => {
+      if (cancelled) return;
+      const dimensions = { N: pixelData[0]?.length ?? 0, M: pixelData.length };
+      const counts = new Map<string, number>();
+      pixelData.flat().forEach((cell) => {
+        if (!cell?.isExternal) counts.set(cell.color, (counts.get(cell.color) ?? 0) + 1);
+      });
+      const colors = Array.from(counts, ([color, total]) => ({ color, name: getColorKeyByHex(color, colorSystem), total, completed: 0 }));
+      setMappedPixelData(pixelData);
+      setGridDimensions(dimensions);
+      setAvailableColors(colors);
+      if (project) {
+        setFocusProject(project);
+        const progress = await loadFocusProgress(project.id);
+        const completedCells = progress && progress.revision === project.revision
+          ? new Set(progress.completedCells.map((index) => `${Math.floor(index / dimensions.N)},${index % dimensions.N}`))
+          : new Set<string>();
+        setFocusState((previous) => ({
+          ...previous,
+          currentColor: colors[0]?.color ?? '',
+          completedCells,
+          colorProgress: colors.reduce<Record<string, { completed: number; total: number }>>((result, color) => {
+            result[color.color] = {
+              total: color.total,
+              completed: Array.from(completedCells).filter((key) => {
+                const [row, col] = key.split(',').map(Number);
+                return pixelData[row]?.[col]?.color === color.color;
+              }).length,
+            };
+            return result;
+          }, {}),
+        }));
+      } else if (colors.length > 0) {
+        setFocusState((previous) => ({ ...previous, currentColor: colors[0].color, colorProgress: colors.reduce<Record<string, { completed: number; total: number }>>((result, color) => { result[color.color] = { completed: 0, total: color.total }; return result; }, {}) }));
+      }
+    };
 
-    if (savedPixelData && savedGridDimensions && savedColorCounts) {
+    const load = async () => {
       try {
-        const pixelData = JSON.parse(savedPixelData);
-        const dimensions = JSON.parse(savedGridDimensions);
-        const colorCounts = JSON.parse(savedColorCounts);
-
-        setMappedPixelData(pixelData);
-        setGridDimensions(dimensions);
-        
-        // 设置色号系统 - 已移除未使用的状态
-
-        // 计算颜色进度
-        const colors = Object.entries(colorCounts).map(([, colorData]) => {
-          const data = colorData as { color: string; count: number };
-          // 通过hex值获取对应色号系统的色号
-          const displayKey = getColorKeyByHex(data.color, savedColorSystem as ColorSystem || 'MARD');
-          return {
-            color: data.color,
-            name: displayKey, // 使用色号系统的色号作为名称
-            total: data.count,
-            completed: 0
-          };
-        });
-        setAvailableColors(colors);
-
-        // 设置初始当前颜色
-        if (colors.length > 0) {
-          setFocusState(prev => ({
-            ...prev,
-            currentColor: colors[0].color,
-            colorProgress: colors.reduce((acc, color) => ({
-              ...acc,
-              [color.color]: { completed: 0, total: color.total }
-            }), {})
-          }));
+        const query = new URLSearchParams(window.location.search);
+        const projectId = query.get('project');
+        if (projectId) {
+          const project = await loadProject(projectId);
+          if (project) {
+            await applyData(editorDocumentToGrid(project), project.colorSystem, { id: project.id, revision: project.revision });
+            return;
+          }
         }
+        const savedPixelData = localStorage.getItem('focusMode_pixelData');
+        const savedColorSystem = (localStorage.getItem('focusMode_selectedColorSystem') || 'MARD') as ColorSystem;
+        if (!savedPixelData) throw new Error('No focus project found');
+        const pixelData = JSON.parse(savedPixelData) as MappedPixel[][];
+        const migrated = createEditorDocument(pixelData, savedColorSystem, '迁移的拼豆项目');
+        await saveProject(migrated);
+        window.history.replaceState(null, '', `/focus/?project=${encodeURIComponent(migrated.id)}&revision=${migrated.revision}`);
+        await applyData(pixelData, savedColorSystem, { id: migrated.id, revision: migrated.revision });
       } catch (error) {
         console.error('Failed to load focus mode data:', error);
-        // 重定向到主页面
         window.location.href = '/';
       }
-    } else {
-      // 没有数据，重定向到主页面
-      window.location.href = '/';
-    }
+    };
+    void load();
+    return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!focusProject || !gridDimensions) return;
+    const timer = window.setTimeout(() => {
+      const completedCells = Array.from(focusState.completedCells).map((key) => {
+        const [row, col] = key.split(',').map(Number);
+        return row * gridDimensions.N + col;
+      });
+      void saveFocusProgress({ projectId: focusProject.id, revision: focusProject.revision, completedCells, updatedAt: Date.now() });
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [focusProject, focusState.completedCells, gridDimensions]);
 
   // 计算推荐的下一个区域
   const calculateRecommendedRegion = useCallback(() => {

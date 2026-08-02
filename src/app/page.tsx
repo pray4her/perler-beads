@@ -85,6 +85,8 @@ import { loadPaletteSelections, savePaletteSelections, presetToSelections, Palet
 import { TRANSPARENT_KEY, transparentColorData } from '../utils/pixelEditingUtils';
 import { recalculateColorStats } from '../utils/pixelEditingUtils';
 import PixelEditorWorkspace from '../components/PixelEditorWorkspace';
+import { createEditorDocument, editorDocumentToGrid } from '@/editor/document';
+import type { EditorCommitResult } from '@/editor/types';
 
 import FocusModePreDownloadModal from '../components/FocusModePreDownloadModal';
 
@@ -1938,6 +1940,17 @@ export default function Home() {
     setInitialGridColorKeys(new Set(Object.keys(stats.colorCounts)));
   }, []);
 
+  const editorInitialDocument = useMemo(() => {
+    if (!mappedPixelData) return null;
+    return createEditorDocument(mappedPixelData, selectedColorSystem, "拼豆作品");
+  // The workspace owns subsequent revisions; this value is only consumed on mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isManualColoringMode]);
+
+  const handleEditorCommit = useCallback((result: EditorCommitResult) => {
+    handleEditorGridChange(editorDocumentToGrid(result.document));
+  }, [handleEditorGridChange]);
+
   return (
     <>
     <style dangerouslySetInnerHTML={{ __html: '@keyframes toastFadeInOut{0%{opacity:0;transform:translate(-50%,10px)}15%{opacity:1;transform:translate(-50%,0)}85%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;transform:translate(-50%,-10px)}}' }} />
@@ -2190,20 +2203,25 @@ export default function Home() {
 
               {/* Canvas Preview Container */}
               {/* Apply dark mode styles */}
-              {isManualColoringMode && mappedPixelData && gridDimensions ? (
+              {isManualColoringMode && mappedPixelData && gridDimensions && editorInitialDocument ? (
                 <PixelEditorWorkspace
-                  mappedPixelData={mappedPixelData}
-                  gridDimensions={gridDimensions}
+                  initialDocument={editorInitialDocument}
                   paletteColors={fullPaletteColors}
                   currentColors={currentGridColors}
-                  selectedColorSystem={selectedColorSystem}
-                  onChange={handleEditorGridChange}
+                  onCommit={handleEditorCommit}
                   onExit={() => {
                     setIsManualColoringMode(false);
                     setSelectedColor(null);
                     setTooltipData(null);
                   }}
                   onDownloadPattern={() => setIsDownloadSettingsOpen(true)}
+                  onEnterFocus={(projectId, revision) => {
+                    localStorage.setItem('focusMode_pixelData', JSON.stringify(mappedPixelData));
+                    localStorage.setItem('focusMode_gridDimensions', JSON.stringify(gridDimensions));
+                    localStorage.setItem('focusMode_colorCounts', JSON.stringify(colorCounts));
+                    localStorage.setItem('focusMode_selectedColorSystem', selectedColorSystem);
+                    window.location.href = `/focus/?project=${encodeURIComponent(projectId)}&revision=${revision}`;
+                  }}
                 />
               ) : <div className="bg-card p-4 rounded-xl shadow-[var(--shadow-card)] border border-border">
                 {gridDimensions && gridDimensions.N > 100 && (

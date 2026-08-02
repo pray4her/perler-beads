@@ -39,8 +39,11 @@ export function renderDisplayPreview(
   if (!context) return;
 
   context.clearRect(0, 0, dimensions.width, dimensions.height);
+  context.save();
+  context.globalAlpha = settings.backgroundOpacity;
   context.fillStyle = settings.backgroundColor;
   context.fillRect(0, 0, dimensions.width, dimensions.height);
+  context.restore();
 
   const rows = grid.length;
   const columns = grid[0]?.length ?? 0;
@@ -51,7 +54,7 @@ export function renderDisplayPreview(
   const cellSize = Math.max(1, Math.floor(Math.min(availableWidth / columns, availableHeight / rows)));
   const patternWidth = cellSize * columns;
   const patternHeight = cellSize * rows;
-  const patternX = Math.round((dimensions.width - patternWidth) / 2);
+  const patternX = Math.round((dimensions.width - patternWidth) / 2 + settings.imageOffsetX * dimensions.width * 0.18);
   const basePatternY = dimensions.height * (settings.aspectRatio === "9:16" ? 0.08 : 0.09);
   const patternY = Math.round(basePatternY + settings.imageOffsetY * dimensions.height * 0.18);
 
@@ -65,6 +68,7 @@ export function renderDisplayPreview(
   context.restore();
 
   context.imageSmoothingEnabled = false;
+  context.globalAlpha = settings.imageOpacity;
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < columns; col++) {
       const cell = grid[row][col];
@@ -72,28 +76,44 @@ export function renderDisplayPreview(
       context.fillRect(patternX + col * cellSize, patternY + row * cellSize, cellSize, cellSize);
     }
   }
+  context.globalAlpha = 1;
 
   const titleY = Math.max(
     patternY + patternHeight + dimensions.height * 0.11,
     dimensions.height * 0.76,
   );
-  context.globalAlpha = settings.textOpacity;
-  context.fillStyle = settings.textColor;
+  const titleX = dimensions.width / 2 + settings.titleOffsetX * dimensions.width * 0.25;
+  const subtitleX = dimensions.width / 2 + settings.subtitleOffsetX * dimensions.width * 0.25;
+  const adjustedTitleY = titleY + settings.titleOffsetY * dimensions.height * 0.16;
+  const adjustedSubtitleY = titleY + settings.titleSize * 2.5 + settings.subtitleOffsetY * dimensions.height * 0.16;
+  context.globalAlpha = settings.titleOpacity;
+  context.fillStyle = settings.titleColor;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.font = `${settings.fontWeight} ${settings.titleSize * 2.4}px ${fontFamilies[settings.fontFamily]}`;
-  context.fillText(settings.title || "未命名作品", dimensions.width / 2, titleY, dimensions.width * 0.78);
+  context.font = `${settings.titleFontWeight} ${settings.titleSize * 2.4}px/${settings.titleLineHeight} ${fontFamilies[settings.fontFamily]}`;
+  context.fillText(settings.title || "未命名作品", titleX, adjustedTitleY, dimensions.width * (1 - settings.safeArea * 2));
 
-  context.font = `400 ${Math.max(28, settings.titleSize * 0.95)}px ${fontFamilies[settings.fontFamily]}`;
-  context.fillText(settings.subtitle, dimensions.width / 2, titleY + settings.titleSize * 2.5, dimensions.width * 0.76);
+  context.globalAlpha = settings.subtitleOpacity;
+  context.fillStyle = settings.subtitleColor;
+  context.font = `${settings.subtitleFontWeight} ${settings.subtitleSize * 2}px/${settings.subtitleLineHeight} ${fontFamilies[settings.fontFamily]}`;
+  context.fillText(settings.subtitle, subtitleX, adjustedSubtitleY, dimensions.width * (1 - settings.safeArea * 2));
   context.globalAlpha = 1;
 }
 
-export function downloadCanvasPng(canvas: HTMLCanvasElement, filename: string) {
+export async function canvasToPngBlob(canvas: HTMLCanvasElement) {
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("无法生成 PNG 图片");
+  return blob;
+}
+
+export async function downloadCanvasPng(canvas: HTMLCanvasElement, filename: string) {
+  const blob = await canvasToPngBlob(canvas);
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.download = filename;
-  link.href = canvas.toDataURL("image/png");
+  link.href = url;
   document.body.appendChild(link);
   link.click();
   link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }

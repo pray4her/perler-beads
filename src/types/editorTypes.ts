@@ -5,10 +5,12 @@ export type EditorTool =
   | "fill"
   | "line"
   | "rectangle"
+  | "ellipse"
+  | "stamp"
   | "select"
   | "eraser";
 
-export type PaletteSortMode = "hue" | "code";
+export type PaletteSortMode = "usage" | "hue" | "saturation" | "lightness" | "code" | "similarity";
 export type RectangleMode = "outline" | "filled";
 
 export interface GridPoint {
@@ -23,16 +25,4 @@ export interface GridSelection {
   endCol: number;
 }
 
-export interface PreviewSettings {
-  title: string;
-  subtitle: string;
-  fontFamily: "sans" | "serif" | "mono" | "handwriting";
-  fontWeight: "400" | "600" | "700";
-  titleSize: number;
-  textColor: string;
-  textOpacity: number;
-  backgroundColor: string;
-  imageScale: number;
-  imageOffsetY: number;
-  aspectRatio: "1:1" | "4:5" | "9:16";
-}
+export type { EditorPreviewSettings as PreviewSettings } from "@/editor/types";

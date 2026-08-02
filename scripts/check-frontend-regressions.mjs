@@ -108,10 +108,20 @@ for (const tool of ['move', 'brush', 'eyedropper', 'fill', 'line', 'rectangle', 
     failures.push(`editor-tools: missing ${tool} tool`);
   }
 }
-if (!/const undo = useCallback/.test(editor) || !/const redo = useCallback/.test(editor)) {
+if (
+  !(
+    (/const undo = useCallback/.test(editor) && /const redo = useCallback/.test(editor)) ||
+    (/store\.undo\(\)/.test(editor) && /store\.redo\(\)/.test(editor))
+  )
+) {
   failures.push('editor-history: undo/redo callbacks are not both present');
 }
-if (!/resizeGridCentered/.test(editor) || !/cropToSelection/.test(editor)) {
+if (
+  !(
+    (/resizeGridCentered/.test(editor) && /cropToSelection/.test(editor)) ||
+    (/resizeEditorDocument/.test(editor) && /cropEditorDocument/.test(editor))
+  )
+) {
   failures.push('editor-canvas: centered resize or selection crop is not wired');
 }
 if (!/ResultPreviewPanel/.test(editor) || !/onDownloadPattern/.test(editor)) {
