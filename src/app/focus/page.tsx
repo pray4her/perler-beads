@@ -2,16 +2,18 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { MappedPixel } from '../../utils/pixelation';
-import { 
-  getAllConnectedRegions, 
-  isRegionCompleted, 
-  getRegionCenter, 
-  sortRegionsByDistance, 
+import {
+  getAllConnectedRegions,
+  isRegionCompleted,
+  getRegionCenter,
+  sortRegionsByDistance,
   sortRegionsBySize,
   getConnectedRegion
 } from '../../utils/floodFillUtils';
 import FocusCanvas from '../../components/FocusCanvas';
 import ColorStatusBar from '../../components/ColorStatusBar';
+import RowStatusBar from '../../components/RowStatusBar';
+import ModeBar from '../../components/ModeBar';
 import ProgressBar from '../../components/ProgressBar';
 import ToolBar from '../../components/ToolBar';
 import ColorPanel from '../../components/ColorPanel';
@@ -24,40 +26,83 @@ import { Button } from '@/components/ui/button';
 import { createEditorDocument, editorDocumentToGrid } from '@/editor/document';
 import { loadFocusProgress, loadProject, saveFocusProgress, saveProject, hashEditorContent } from '@/editor/projectStorage';
 
+/** Wake Lock 的最小类型声明，避免依赖较新的 lib.dom 定义 */
+type WakeLockNavigator = Navigator & {
+  wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+};
+
+/** 某一行需要摆放的豆子总数（跳过外部区域格） */
+const countRowTotal = (pixelData: MappedPixel[][], row: number): number => {
+  const cells = pixelData[row] ?? [];
+  let total = 0;
+  for (const cell of cells) {
+    if (!cell?.isExternal) total++;
+  }
+  return total;
+};
+
+/** 某一行已标记完成的豆子数 */
+const countRowCompleted = (pixelData: MappedPixel[][], row: number, completedCells: Set<string>): number => {
+  const cells = pixelData[row] ?? [];
+  let completed = 0;
+  for (let col = 0; col < cells.length; col++) {
+    if (!cells[col]?.isExternal && completedCells.has(`${row},${col}`)) completed++;
+  }
+  return completed;
+};
+
+/** 从 startRow 起（环形）找第一行还有未完成的行；全部完成时返回 startRow */
+const findFirstIncompleteRow = (pixelData: MappedPixel[][], completedCells: Set<string>, startRow = 0): number => {
+  if (pixelData.length === 0) return 0;
+  for (let offset = 0; offset < pixelData.length; offset++) {
+    const row = (startRow + offset) % pixelData.length;
+    if (countRowCompleted(pixelData, row, completedCells) < countRowTotal(pixelData, row)) {
+      return row;
+    }
+  }
+  return startRow;
+};
+
 interface FocusModeState {
   // 当前状态
   currentColor: string;
   selectedCell: { row: number; col: number } | null;
-  
+
   // 画布状态
   canvasScale: number;
   canvasOffset: { x: number; y: number };
-  
+
   // 进度状态
   completedCells: Set<string>;
   colorProgress: Record<string, { completed: number; total: number }>;
-  
+
+  // 推进方式：逐色（连通区域引导）/ 逐行（按行推进）
+  progressMode: 'color' | 'row';
+  currentRow: number;
+
   // 引导状态 - 改为区域推荐
   recommendedRegion: { row: number; col: number }[] | null;
   recommendedCell: { row: number; col: number } | null; // 保留用于定位显示
   guidanceMode: 'nearest' | 'largest' | 'edge-first';
-  
+
   // UI状态
   showColorPanel: boolean;
   showSettingsPanel: boolean;
   isPaused: boolean;
   completionPaused: boolean; // 因全部完成而自动暂停（区别于手动暂停）
-  
+
   // 计时器状态
   startTime: number; // 开始时间戳
   totalElapsedTime: number; // 总计用时（秒）
   lastResumeTime: number; // 最后一次恢复的时间戳
-  
+
   // 显示设置
   gridSectionInterval: number; // 网格分区间隔
   showSectionLines: boolean; // 是否显示分割线
   sectionLineColor: string; // 分割线颜色
+  showCoordinates: boolean; // 是否显示行列坐标标尺
   enableCelebration: boolean; // 是否启用庆祝动画
+  wakeLockEnabled: boolean; // 是否在制作时保持屏幕常亮
   showCelebration: boolean; // 是否显示庆祝动画
   showCompletionCard: boolean; // 是否显示完成打卡图
 }
@@ -71,6 +116,8 @@ export default function FocusMode() {
   const [progressLoaded, setProgressLoaded] = useState(false);
   // 进度保存待 flush 的引用（页面隐藏时立即保存）
   const flushSaveRef = React.useRef<(() => void) | null>(null);
+  // 计时状态的最新快照（供持久化读取，避免把每秒 tick 纳入保存依赖）
+  const timerSnapshotRef = React.useRef({ totalElapsedTime: 0, isPaused: false });
 
   // 专心模式状态
   const [focusState, setFocusState] = useState<FocusModeState>({
@@ -80,6 +127,8 @@ export default function FocusMode() {
     canvasOffset: { x: 0, y: 0 },
     completedCells: new Set<string>(),
     colorProgress: {},
+    progressMode: 'color',
+    currentRow: 0,
     recommendedRegion: null,
     recommendedCell: null,
     guidanceMode: 'nearest',
@@ -93,7 +142,9 @@ export default function FocusMode() {
     gridSectionInterval: 10,
     showSectionLines: true,
     sectionLineColor: '#007acc',
+    showCoordinates: true,
     enableCelebration: true,
+    wakeLockEnabled: true,
     showCelebration: false,
     showCompletionCard: false
   });
@@ -114,7 +165,7 @@ export default function FocusMode() {
   // 计时器管理
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    
+
     if (!focusState.isPaused) {
       interval = setInterval(() => {
         setFocusState(prev => {
@@ -128,13 +179,21 @@ export default function FocusMode() {
         });
       }, 1000); // 每秒更新一次
     }
-    
+
     return () => {
       if (interval) {
         clearInterval(interval);
       }
     };
   }, [focusState.isPaused]);
+
+  // 同步计时快照，持久化时读取（不触发额外渲染）
+  useEffect(() => {
+    timerSnapshotRef.current = {
+      totalElapsedTime: focusState.totalElapsedTime,
+      isPaused: focusState.isPaused
+    };
+  }, [focusState.totalElapsedTime, focusState.isPaused]);
 
   // 优先从 IndexedDB 项目加载；没有项目参数时迁移旧 localStorage 数据。
   useEffect(() => {
@@ -161,10 +220,37 @@ export default function FocusMode() {
         const completedCells = isValid
           ? new Set(progress.completedCells.map((index) => `${Math.floor(index / dimensions.N)},${index % dimensions.N}`))
           : new Set<string>();
+        // 校验通过时一并恢复设置/计时/当前色/当前行（旧记录没有这些字段则保持默认）
+        const restored = isValid ? progress : undefined;
+        const restoredRow = restored?.currentRow;
+        const currentRow = restoredRow !== undefined && restoredRow >= 0 && restoredRow < dimensions.M
+          ? restoredRow
+          : findFirstIncompleteRow(pixelData, completedCells);
+        const restoredColor = restored?.currentColor;
+        const currentColor = restoredColor && counts.has(restoredColor)
+          ? restoredColor
+          : colors[0]?.color ?? '';
+        const timer = restored?.timer;
         setFocusState((previous) => ({
           ...previous,
-          currentColor: colors[0]?.color ?? '',
+          currentColor,
+          currentRow,
           completedCells,
+          ...(restored?.settings ? {
+            guidanceMode: restored.settings.guidanceMode,
+            gridSectionInterval: restored.settings.gridSectionInterval,
+            showSectionLines: restored.settings.showSectionLines,
+            sectionLineColor: restored.settings.sectionLineColor,
+            enableCelebration: restored.settings.enableCelebration,
+            progressMode: restored.settings.progressMode,
+            showCoordinates: restored.settings.showCoordinates,
+            wakeLockEnabled: restored.settings.wakeLockEnabled,
+          } : {}),
+          // 计时恢复：保存时处于暂停则保持暂停，否则以加载时刻为起点继续走表
+          ...(timer ? (timer.isPaused
+            ? { totalElapsedTime: timer.totalElapsedTime, isPaused: true }
+            : { totalElapsedTime: timer.totalElapsedTime, isPaused: false, lastResumeTime: Date.now() }
+          ) : {}),
           colorProgress: colors.reduce<Record<string, { completed: number; total: number }>>((result, color) => {
             result[color.color] = {
               total: color.total,
@@ -219,7 +305,27 @@ export default function FocusMode() {
         const [row, col] = key.split(',').map(Number);
         return row * gridDimensions.N + col;
       });
-      saveFocusProgress({ projectId: focusProject.id, revision: focusProject.revision, contentHash: focusProject.contentHash, completedCells, updatedAt: Date.now() })
+      saveFocusProgress({
+        projectId: focusProject.id,
+        revision: focusProject.revision,
+        contentHash: focusProject.contentHash,
+        completedCells,
+        updatedAt: Date.now(),
+        settings: {
+          guidanceMode: focusState.guidanceMode,
+          gridSectionInterval: focusState.gridSectionInterval,
+          showSectionLines: focusState.showSectionLines,
+          sectionLineColor: focusState.sectionLineColor,
+          enableCelebration: focusState.enableCelebration,
+          progressMode: focusState.progressMode,
+          showCoordinates: focusState.showCoordinates,
+          wakeLockEnabled: focusState.wakeLockEnabled,
+        },
+        // 计时读快照，避免每秒 tick 触发保存
+        timer: timerSnapshotRef.current,
+        currentColor: focusState.currentColor,
+        currentRow: focusState.currentRow,
+      })
         .catch((error) => console.error('保存专心模式进度失败:', error));
     };
     const timer = window.setTimeout(save, 500);
@@ -232,7 +338,23 @@ export default function FocusMode() {
       window.clearTimeout(timer);
       if (flushSaveRef.current === flush) flushSaveRef.current = null;
     };
-  }, [focusProject, focusState.completedCells, gridDimensions, progressLoaded]);
+  }, [
+    focusProject,
+    focusState.completedCells,
+    focusState.currentColor,
+    focusState.currentRow,
+    focusState.guidanceMode,
+    focusState.gridSectionInterval,
+    focusState.showSectionLines,
+    focusState.sectionLineColor,
+    focusState.enableCelebration,
+    focusState.progressMode,
+    focusState.showCoordinates,
+    focusState.wakeLockEnabled,
+    focusState.isPaused,
+    gridDimensions,
+    progressLoaded
+  ]);
 
   // 页面隐藏/关闭时立即保存未落盘的进度
   useEffect(() => {
@@ -248,15 +370,46 @@ export default function FocusMode() {
     };
   }, []);
 
+  // 制作时保持屏幕常亮（可随时在设置中关闭）
+  useEffect(() => {
+    if (!focusState.wakeLockEnabled) return;
+    const nav = navigator as WakeLockNavigator;
+    if (!nav.wakeLock) return;
+    let sentinel: { release: () => Promise<void> } | null = null;
+    let released = false;
+    const request = async () => {
+      try {
+        const lock = await nav.wakeLock!.request('screen');
+        if (released) {
+          await lock.release().catch(() => {});
+          return;
+        }
+        sentinel = lock;
+      } catch {
+        // 页面不可见或浏览器拒绝时静默失败
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void request();
+    };
+    void request();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      released = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      sentinel?.release().catch(() => {});
+    };
+  }, [focusState.wakeLockEnabled]);
+
   // 计算推荐的下一个区域
   const calculateRecommendedRegion = useCallback(() => {
     if (!mappedPixelData || !focusState.currentColor) return { region: null, cell: null };
 
     // 获取当前颜色的所有连通区域
     const allRegions = getAllConnectedRegions(mappedPixelData, focusState.currentColor);
-    
+
     // 筛选出未完成的区域
-    const incompleteRegions = allRegions.filter(region => 
+    const incompleteRegions = allRegions.filter(region =>
       !isRegionCompleted(region, focusState.completedCells)
     );
 
@@ -270,11 +423,11 @@ export default function FocusMode() {
     switch (focusState.guidanceMode) {
       case 'nearest':
         // 找最近的区域（相对于上一个完成的格子或中心点）
-        const referencePoint = focusState.selectedCell ?? { 
-          row: Math.floor(mappedPixelData.length / 2), 
-          col: Math.floor(mappedPixelData[0].length / 2) 
+        const referencePoint = focusState.selectedCell ?? {
+          row: Math.floor(mappedPixelData.length / 2),
+          col: Math.floor(mappedPixelData[0].length / 2)
         };
-        
+
         const sortedByDistance = sortRegionsByDistance(incompleteRegions, referencePoint);
         selectedRegion = sortedByDistance[0];
         break;
@@ -289,13 +442,13 @@ export default function FocusMode() {
         // 优先选择包含边缘格子的区域
         const M = mappedPixelData.length;
         const N = mappedPixelData[0].length;
-        const edgeRegions = incompleteRegions.filter(region => 
-          region.some(cell => 
+        const edgeRegions = incompleteRegions.filter(region =>
+          region.some(cell =>
             cell.row === 0 || cell.row === M - 1 ||
             cell.col === 0 || cell.col === N - 1
           )
         );
-        
+
         if (edgeRegions.length > 0) {
           selectedRegion = edgeRegions[0];
         } else {
@@ -309,178 +462,227 @@ export default function FocusMode() {
 
     // 计算区域中心作为推荐显示位置
     const centerCell = getRegionCenter(selectedRegion);
-    
-    return { 
-      region: selectedRegion, 
-      cell: centerCell 
+
+    return {
+      region: selectedRegion,
+      cell: centerCell
     };
   }, [mappedPixelData, focusState.currentColor, focusState.completedCells, focusState.selectedCell, focusState.guidanceMode]);
 
   // 更新推荐区域
   useEffect(() => {
     const { region, cell } = calculateRecommendedRegion();
-    setFocusState(prev => ({ 
-      ...prev, 
+    setFocusState(prev => ({
+      ...prev,
       recommendedRegion: region,
-      recommendedCell: cell 
+      recommendedCell: cell
     }));
   }, [calculateRecommendedRegion]);
 
-  // 处理格子点击 - 改为区域洪水填充标记
+  // 处理格子点击 - 区域洪水填充标记
+  // 逐色模式只响应当前色；逐行模式以被点格子自身的颜色标记
   const handleCellClick = useCallback((row: number, col: number) => {
     if (!mappedPixelData) return;
 
     const cellColor = mappedPixelData[row][col].color;
+    const isRowMode = focusState.progressMode === 'row';
 
-    // 如果点击的是当前颜色的格子，对整个连通区域进行标记
-    if (cellColor === focusState.currentColor) {
-      // 获取点击位置的连通区域
-      const region = getConnectedRegion(mappedPixelData, row, col, focusState.currentColor);
-      
-      if (region.length === 0) return;
+    if (!isRowMode && cellColor !== focusState.currentColor) return;
 
-      const newCompletedCells = new Set(focusState.completedCells);
-      
-      // 检查区域是否已完成
-      const isCurrentlyCompleted = isRegionCompleted(region, focusState.completedCells);
-      
-      if (isCurrentlyCompleted) {
-        // 如果区域已完成，取消整个区域的完成状态
-        region.forEach(({ row: r, col: c }) => {
-          newCompletedCells.delete(`${r},${c}`);
-        });
-      } else {
-        // 如果区域未完成，标记整个区域为完成
-        region.forEach(({ row: r, col: c }) => {
-          newCompletedCells.add(`${r},${c}`);
-        });
-      }
+    const targetColor = isRowMode ? cellColor : focusState.currentColor;
 
-      // 更新进度
-      const newColorProgress = { ...focusState.colorProgress };
-      let colorJustCompleted = false;
-      
-      if (newColorProgress[focusState.currentColor]) {
-        const oldCompleted = newColorProgress[focusState.currentColor].completed;
-        const newCompleted = Array.from(newCompletedCells)
-          .filter(key => {
-            const [r, c] = key.split(',').map(Number);
-            return mappedPixelData[r]?.[c]?.color === focusState.currentColor;
-          }).length;
-        
-        newColorProgress[focusState.currentColor].completed = newCompleted;
+    // 获取点击位置的连通区域
+    const region = getConnectedRegion(mappedPixelData, row, col, targetColor);
 
-        // 检测颜色是否刚刚完成
-        const total = newColorProgress[focusState.currentColor].total;
-        if (oldCompleted < total && newCompleted === total) {
-          colorJustCompleted = true;
-        }
-      }
+    if (region.length === 0) return;
 
-      // 检查是否所有颜色都完成了（包括当前刚完成的颜色）
-      const allColorsCompleted = Object.values(newColorProgress).every(
-        progress => progress.completed >= progress.total
-      );
+    const newCompletedCells = new Set(focusState.completedCells);
 
-      setFocusState(prev => {
-        const now = Date.now();
-        let newState = {
-          ...prev,
-          completedCells: newCompletedCells,
-          selectedCell: { row, col },
-          colorProgress: newColorProgress,
-          showCelebration: colorJustCompleted && focusState.enableCelebration
-        };
+    // 检查区域是否已完成
+    const isCurrentlyCompleted = isRegionCompleted(region, focusState.completedCells);
 
-        // 如果所有颜色都完成了，停止计时（标记为自动暂停）
-        if (allColorsCompleted && !prev.isPaused) {
-          const elapsed = Math.floor((now - prev.lastResumeTime) / 1000);
-          newState = {
-            ...newState,
-            isPaused: true,
-            completionPaused: true,
-            totalElapsedTime: prev.totalElapsedTime + elapsed
-          };
-        } else if (!allColorsCompleted && prev.completionPaused) {
-          // 取消标记后不再全部完成：自动恢复计时（不覆盖手动暂停）
-          newState = {
-            ...newState,
-            isPaused: false,
-            completionPaused: false,
-            lastResumeTime: now
-          };
-        }
-
-        return newState;
+    if (isCurrentlyCompleted) {
+      // 如果区域已完成，取消整个区域的完成状态
+      region.forEach(({ row: r, col: c }) => {
+        newCompletedCells.delete(`${r},${c}`);
       });
+    } else {
+      // 如果区域未完成，标记整个区域为完成
+      region.forEach(({ row: r, col: c }) => {
+        newCompletedCells.add(`${r},${c}`);
+      });
+    }
 
-      // 庆祝动画关闭时，直接走完成流程（否则完成打卡图不会出现）
-      if (colorJustCompleted && !focusState.enableCelebration) {
-        if (allColorsCompleted) {
-          setFocusState(prev => ({ ...prev, showCompletionCard: true }));
-        } else {
-          // 切换到下一个未完成的颜色
-          const currentIndex = colorTotals.findIndex(color => color.color === focusState.currentColor);
-          for (let i = 1; currentIndex !== -1 && i < colorTotals.length; i++) {
-            const nextColor = colorTotals[(currentIndex + i) % colorTotals.length];
-            const progress = newColorProgress[nextColor.color];
-            if (progress && progress.completed < progress.total) {
-              setFocusState(prev => ({ ...prev, currentColor: nextColor.color }));
-              break;
-            }
+    // 更新进度
+    const newColorProgress = { ...focusState.colorProgress };
+    let colorJustCompleted = false;
+
+    if (newColorProgress[targetColor]) {
+      const oldCompleted = newColorProgress[targetColor].completed;
+      const newCompleted = Array.from(newCompletedCells)
+        .filter(key => {
+          const [r, c] = key.split(',').map(Number);
+          return mappedPixelData[r]?.[c]?.color === targetColor;
+        }).length;
+
+      newColorProgress[targetColor] = { ...newColorProgress[targetColor], completed: newCompleted };
+
+      // 检测颜色是否刚刚完成（逐行模式不触发单色庆祝）
+      const total = newColorProgress[targetColor].total;
+      if (!isRowMode && oldCompleted < total && newCompleted === total) {
+        colorJustCompleted = true;
+      }
+    }
+
+    // 检查是否所有颜色都完成了（包括当前刚完成的颜色）
+    const allColorsCompleted = Object.values(newColorProgress).every(
+      progress => progress.completed >= progress.total
+    );
+
+    setFocusState(prev => {
+      const now = Date.now();
+      let newState = {
+        ...prev,
+        completedCells: newCompletedCells,
+        selectedCell: { row, col },
+        colorProgress: newColorProgress,
+        showCelebration: colorJustCompleted && focusState.enableCelebration
+      };
+
+      // 如果所有颜色都完成了，停止计时（标记为自动暂停）
+      if (allColorsCompleted && !prev.isPaused) {
+        const elapsed = Math.floor((now - prev.lastResumeTime) / 1000);
+        newState = {
+          ...newState,
+          isPaused: true,
+          completionPaused: true,
+          totalElapsedTime: prev.totalElapsedTime + elapsed
+        };
+      } else if (!allColorsCompleted && prev.completionPaused) {
+        // 取消标记后不再全部完成：自动恢复计时（不覆盖手动暂停）
+        newState = {
+          ...newState,
+          isPaused: false,
+          completionPaused: false,
+          lastResumeTime: now
+        };
+      }
+
+      return newState;
+    });
+
+    if (isRowMode) {
+      // 逐行模式：无单色庆祝；全部完成出打卡图，当前行完成自动推进
+      if (allColorsCompleted) {
+        setFocusState(prev => ({ ...prev, showCompletionCard: true }));
+      } else if (
+        countRowCompleted(mappedPixelData, focusState.currentRow, newCompletedCells) >=
+        countRowTotal(mappedPixelData, focusState.currentRow)
+      ) {
+        setFocusState(prev => ({
+          ...prev,
+          currentRow: findFirstIncompleteRow(
+            mappedPixelData,
+            newCompletedCells,
+            Math.min(prev.currentRow + 1, mappedPixelData.length - 1)
+          )
+        }));
+      }
+      return;
+    }
+
+    // 庆祝动画关闭时，直接走完成流程（否则完成打卡图不会出现）
+    if (colorJustCompleted && !focusState.enableCelebration) {
+      if (allColorsCompleted) {
+        setFocusState(prev => ({ ...prev, showCompletionCard: true }));
+      } else {
+        // 切换到下一个未完成的颜色
+        const currentIndex = colorTotals.findIndex(color => color.color === focusState.currentColor);
+        for (let i = 1; currentIndex !== -1 && i < colorTotals.length; i++) {
+          const nextColor = colorTotals[(currentIndex + i) % colorTotals.length];
+          const progress = newColorProgress[nextColor.color];
+          if (progress && progress.completed < progress.total) {
+            setFocusState(prev => ({ ...prev, currentColor: nextColor.color }));
+            break;
           }
         }
       }
     }
-  }, [mappedPixelData, focusState.currentColor, focusState.completedCells, focusState.colorProgress, focusState.enableCelebration, colorTotals]);
+  }, [mappedPixelData, focusState.currentColor, focusState.completedCells, focusState.colorProgress, focusState.enableCelebration, focusState.progressMode, focusState.currentRow, colorTotals]);
 
   // 处理颜色切换
   const handleColorChange = useCallback((color: string) => {
     setFocusState(prev => ({ ...prev, currentColor: color, showColorPanel: false }));
   }, []);
 
-  // 处理定位到推荐位置
+  // 处理推进方式切换：切到逐行时定位到第一个未完成行
+  const handleProgressModeChange = useCallback((mode: 'color' | 'row') => {
+    setFocusState(prev => {
+      if (prev.progressMode === mode) return prev;
+      return {
+        ...prev,
+        progressMode: mode,
+        currentRow: mode === 'row' && mappedPixelData
+          ? findFirstIncompleteRow(mappedPixelData, prev.completedCells)
+          : prev.currentRow
+      };
+    });
+  }, [mappedPixelData]);
+
+  // 处理逐行模式的行切换
+  const handleRowChange = useCallback((row: number) => {
+    if (!gridDimensions) return;
+    const clamped = Math.max(0, Math.min(gridDimensions.M - 1, row));
+    setFocusState(prev => ({ ...prev, currentRow: clamped }));
+  }, [gridDimensions]);
+
+  // 处理定位到推荐位置（逐行模式定位当前行）
   const handleLocateRecommended = useCallback(() => {
-    if (!focusState.recommendedCell || !gridDimensions) return;
-    
-    const { row, col } = focusState.recommendedCell;
-    
+    if (!gridDimensions) return;
+
+    const target = focusState.progressMode === 'row'
+      ? { row: focusState.currentRow, col: Math.floor(gridDimensions.N / 2) }
+      : focusState.recommendedCell;
+    if (!target) return;
+
+    const { row, col } = target;
+
     // 计算格子大小（与FocusCanvas中的计算保持一致）
     const cellSize = Math.max(15, Math.min(40, 300 / Math.max(gridDimensions.N, gridDimensions.M)));
-    
+
     // 计算目标格子在画布上的中心位置（像素坐标）
     const targetX = (col + 0.5) * cellSize;
     const targetY = (row + 0.5) * cellSize;
-    
+
     // 计算画布总尺寸
     const canvasWidth = gridDimensions.N * cellSize;
     const canvasHeight = gridDimensions.M * cellSize;
-    
+
     // 简单的定位逻辑：
     // 1. 将目标位置移到画布的中心位置
     // 2. 考虑缩放的影响
-    
+
     // 画布中心位置
     const canvasCenterX = canvasWidth / 2;
     const canvasCenterY = canvasHeight / 2;
-    
+
     // 计算从目标位置到画布中心的偏移量
     const offsetX = canvasCenterX - targetX;
     const offsetY = canvasCenterY - targetY;
-    
+
     // 更新状态
     setFocusState(prev => ({
       ...prev,
       canvasOffset: { x: offsetX, y: offsetY }
     }));
-  }, [focusState.recommendedCell, gridDimensions]);
+  }, [focusState.progressMode, focusState.currentRow, focusState.recommendedCell, gridDimensions]);
 
   // 格式化时间显示
   const formatTime = useCallback((seconds: number): string => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    
+
     if (hours > 0) {
       return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     } else {
@@ -512,13 +714,46 @@ export default function FocusMode() {
     });
   }, []);
 
+  // 桌面端键盘快捷键（面板打开或焦点在输入控件时忽略）
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+
+      if (event.key === 'Escape') {
+        setFocusState(prev => (prev.showColorPanel || prev.showSettingsPanel)
+          ? { ...prev, showColorPanel: false, showSettingsPanel: false }
+          : prev);
+        return;
+      }
+      if (focusState.showColorPanel || focusState.showSettingsPanel) return;
+
+      if (event.code === 'Space') {
+        event.preventDefault();
+        handlePauseToggle();
+      } else if (event.key === 'l' || event.key === 'L') {
+        handleLocateRecommended();
+      } else if ((event.key === 'c' || event.key === 'C') && focusState.progressMode === 'color') {
+        setFocusState(prev => ({ ...prev, showColorPanel: true }));
+      } else if (event.key === 'ArrowUp' && focusState.progressMode === 'row') {
+        event.preventDefault();
+        handleRowChange(focusState.currentRow - 1);
+      } else if (event.key === 'ArrowDown' && focusState.progressMode === 'row') {
+        event.preventDefault();
+        handleRowChange(focusState.currentRow + 1);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [focusState.showColorPanel, focusState.showSettingsPanel, focusState.progressMode, focusState.currentRow, handlePauseToggle, handleLocateRecommended, handleRowChange]);
+
   // 处理庆祝动画完成
   const handleCelebrationComplete = useCallback(() => {
     setFocusState(prev => ({ ...prev, showCelebration: false }));
-    
+
     // 检查是否所有颜色都完成了
     const allCompleted = availableColors.every(color => color.completed >= color.total);
-    
+
     if (allCompleted) {
       // 所有颜色都完成了，显示打卡图
       setFocusState(prev => ({ ...prev, showCompletionCard: true }));
@@ -530,7 +765,7 @@ export default function FocusMode() {
         for (let i = 1; i < availableColors.length; i++) {
           const nextIndex = (currentIndex + i) % availableColors.length;
           const nextColor = availableColors[nextIndex];
-          
+
           // 如果找到未完成的颜色，切换到该颜色
           if (nextColor.completed < nextColor.total) {
             setFocusState(prev => ({ ...prev, currentColor: nextColor.color }));
@@ -559,80 +794,115 @@ export default function FocusMode() {
   }
 
   const currentColorInfo = availableColors.find(c => c.color === focusState.currentColor);
-  const progressPercentage = currentColorInfo ? 
+  const progressPercentage = currentColorInfo ?
     Math.round((currentColorInfo.completed / currentColorInfo.total) * 100) : 0;
+
+  // 逐行模式的行进度
+  const isRowMode = focusState.progressMode === 'row';
+  const currentRowTotal = countRowTotal(mappedPixelData, focusState.currentRow);
+  const currentRowCompleted = countRowCompleted(mappedPixelData, focusState.currentRow, focusState.completedCells);
+  const rowPercentage = currentRowTotal > 0 ? Math.round((currentRowCompleted / currentRowTotal) * 100) : 0;
+  const displayPercentage = isRowMode ? rowPercentage : progressPercentage;
+  const rowHint = currentRowCompleted >= currentRowTotal
+    ? `第 ${focusState.currentRow + 1} 行已完成`
+    : `第 ${focusState.currentRow + 1} 行 · 剩 ${currentRowTotal - currentRowCompleted} 颗`;
 
   return (
     <div className="h-[100dvh] min-h-[100dvh] flex flex-col bg-background">
-      {/* 顶部导航栏 */}
-      <header className="min-h-16 bg-card border-b border-border px-3 sm:px-5 py-2 flex items-center justify-between text-foreground">
-        <Button
-          variant="ghost"
-          onClick={() => {
-            window.location.href = focusProject
-              ? `/?restore=${encodeURIComponent(focusProject.id)}`
-              : '/?restore=latest';
-          }}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          返回
-        </Button>
-        <div className="text-center">
-          <h1 className="text-base sm:text-lg font-semibold">专心模式</h1>
-          <p className="hidden sm:block text-[11px] text-muted-foreground">逐色完成当前底稿</p>
+      <div className="w-full max-w-3xl mx-auto flex flex-col flex-1 min-h-0">
+        {/* 顶部导航栏 */}
+        <header className="min-h-16 bg-card border-b border-border px-3 sm:px-5 py-2 flex items-center justify-between text-foreground">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              window.location.href = focusProject
+                ? `/?restore=${encodeURIComponent(focusProject.id)}`
+                : '/?restore=latest';
+            }}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            返回
+          </Button>
+          <div className="text-center">
+            <h1 className="text-base sm:text-lg font-semibold">专心模式</h1>
+            <p className="hidden sm:block text-[11px] text-muted-foreground">逐色 / 逐行完成当前底稿</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="设置"
+            onClick={() => setFocusState(prev => ({ ...prev, showSettingsPanel: true }))}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Settings className="h-5 w-5" />
+          </Button>
+        </header>
+
+        {/* 推进方式切换 */}
+        <ModeBar
+          progressMode={focusState.progressMode}
+          onProgressModeChange={handleProgressModeChange}
+          currentRow={focusState.currentRow}
+          totalRows={gridDimensions.M}
+          onRowChange={handleRowChange}
+        />
+
+        {/* 当前进度状态栏（按模式二选一） */}
+        {isRowMode ? (
+          <RowStatusBar
+            currentRow={focusState.currentRow}
+            totalRows={gridDimensions.M}
+            completed={currentRowCompleted}
+            total={currentRowTotal}
+          />
+        ) : (
+          <ColorStatusBar
+            currentColor={focusState.currentColor}
+            colorInfo={currentColorInfo}
+            progressPercentage={progressPercentage}
+          />
+        )}
+
+        {/* 主画布区域 */}
+        <div className="flex-1 relative overflow-hidden">
+          <FocusCanvas
+            mappedPixelData={mappedPixelData}
+            gridDimensions={gridDimensions}
+            currentColor={focusState.currentColor}
+            completedCells={focusState.completedCells}
+            recommendedCell={focusState.recommendedCell}
+            recommendedRegion={focusState.recommendedRegion}
+            canvasScale={focusState.canvasScale}
+            canvasOffset={focusState.canvasOffset}
+            gridSectionInterval={focusState.gridSectionInterval}
+            showSectionLines={focusState.showSectionLines}
+            sectionLineColor={focusState.sectionLineColor}
+            progressMode={focusState.progressMode}
+            currentRow={focusState.currentRow}
+            showCoordinates={focusState.showCoordinates}
+            onCellClick={handleCellClick}
+            onScaleChange={(scale: number) => setFocusState(prev => ({ ...prev, canvasScale: scale }))}
+            onOffsetChange={(offset: { x: number; y: number }) => setFocusState(prev => ({ ...prev, canvasOffset: offset }))}
+          />
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setFocusState(prev => ({ ...prev, showSettingsPanel: true }))}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Settings className="h-5 w-5" />
-        </Button>
-      </header>
 
-      {/* 当前颜色状态栏 */}
-      <ColorStatusBar 
-        currentColor={focusState.currentColor}
-        colorInfo={currentColorInfo}
-        progressPercentage={progressPercentage}
-      />
-
-      {/* 主画布区域 */}
-      <div className="flex-1 relative overflow-hidden">
-        <FocusCanvas
-          mappedPixelData={mappedPixelData}
-          gridDimensions={gridDimensions}
-          currentColor={focusState.currentColor}
-          completedCells={focusState.completedCells}
+        {/* 快速进度条 */}
+        <ProgressBar
+          progressPercentage={displayPercentage}
           recommendedCell={focusState.recommendedCell}
-          recommendedRegion={focusState.recommendedRegion}
-          canvasScale={focusState.canvasScale}
-          canvasOffset={focusState.canvasOffset}
-          gridSectionInterval={focusState.gridSectionInterval}
-          showSectionLines={focusState.showSectionLines}
-          sectionLineColor={focusState.sectionLineColor}
-          onCellClick={handleCellClick}
-          onScaleChange={(scale: number) => setFocusState(prev => ({ ...prev, canvasScale: scale }))}
-          onOffsetChange={(offset: { x: number; y: number }) => setFocusState(prev => ({ ...prev, canvasOffset: offset }))}
+          hintText={isRowMode ? rowHint : undefined}
+        />
+
+        {/* 底部工具栏 */}
+        <ToolBar
+          onColorSelect={() => setFocusState(prev => ({ ...prev, showColorPanel: true }))}
+          onLocate={handleLocateRecommended}
+          onPause={handlePauseToggle}
+          isPaused={focusState.isPaused}
+          elapsedTime={formatTime(focusState.totalElapsedTime)}
         />
       </div>
-
-      {/* 快速进度条 */}
-      <ProgressBar 
-        progressPercentage={progressPercentage}
-        recommendedCell={focusState.recommendedCell}
-      />
-
-      {/* 底部工具栏 */}
-      <ToolBar 
-        onColorSelect={() => setFocusState(prev => ({ ...prev, showColorPanel: true }))}
-        onLocate={handleLocateRecommended}
-        onPause={handlePauseToggle}
-        isPaused={focusState.isPaused}
-        elapsedTime={formatTime(focusState.totalElapsedTime)}
-      />
 
       {/* 颜色选择面板 — 常挂载受控 Sheet，避免 open 恒 true + 卸载导致滚动锁残留 */}
       <ColorPanel
@@ -656,6 +926,10 @@ export default function FocusMode() {
         onSectionLineColorChange={(color: string) => setFocusState(prev => ({ ...prev, sectionLineColor: color }))}
         enableCelebration={focusState.enableCelebration}
         onEnableCelebrationChange={(enable: boolean) => setFocusState(prev => ({ ...prev, enableCelebration: enable }))}
+        showCoordinates={focusState.showCoordinates}
+        onShowCoordinatesChange={(show: boolean) => setFocusState(prev => ({ ...prev, showCoordinates: show }))}
+        wakeLockEnabled={focusState.wakeLockEnabled}
+        onWakeLockEnabledChange={(enable: boolean) => setFocusState(prev => ({ ...prev, wakeLockEnabled: enable }))}
         onClose={() => setFocusState(prev => ({ ...prev, showSettingsPanel: false }))}
       />
 

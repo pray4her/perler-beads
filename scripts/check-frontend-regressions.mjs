@@ -67,6 +67,22 @@ if (/\{focusState\.showSettingsPanel\s*&&\s*\(\s*<SettingsPanel/.test(focusPage)
   );
 }
 
+// --- 2.5) Focus dual progress modes (color / row) ---
+if (!/progressMode:\s*'color'\s*\|\s*'row'/.test(focusPage) || !/focusState\.progressMode === 'row'/.test(focusPage)) {
+  failures.push('focus-modes: focus/page.tsx must keep both color and row progress modes wired');
+}
+if (!/<ModeBar/.test(focusPage) || !/<RowStatusBar/.test(focusPage)) {
+  failures.push('focus-modes: ModeBar / RowStatusBar must remain mounted in focus/page.tsx');
+}
+const focusCanvas = read('src/components/FocusCanvas.tsx');
+if (!/progressMode === 'row'/.test(focusCanvas) || !/currentRow/.test(focusCanvas)) {
+  failures.push('focus-modes: FocusCanvas lost the row-mode highlight rendering branch');
+}
+const projectStorage = read('src/editor/projectStorage.ts');
+if (!/settings\?:\s*FocusProgressSettings/.test(projectStorage) || !/timer\?:\s*\{/.test(projectStorage)) {
+  failures.push('focus-persist: FocusProgressRecord must keep optional settings/timer fields (progress + settings + timer persistence)');
+}
+
 // --- 3) Slider onValueChange hardening ---
 const downloadModal = read('src/components/DownloadSettingsModal.tsx');
 const sliderHandler = downloadModal.match(/onValueChange=\{\(([^)]*)\)\s*=>\s*\{([\s\S]*?)\}\s*\}/);

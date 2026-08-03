@@ -13,6 +13,9 @@ interface FocusCanvasProps {
   gridSectionInterval: number;
   showSectionLines: boolean;
   sectionLineColor: string;
+  progressMode: 'color' | 'row';
+  currentRow: number;
+  showCoordinates: boolean;
   onCellClick: (row: number, col: number) => void;
   onScaleChange: (scale: number) => void;
   onOffsetChange: (offset: { x: number; y: number }) => void;
@@ -30,6 +33,9 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
   gridSectionInterval,
   showSectionLines,
   sectionLineColor,
+  progressMode,
+  currentRow,
+  showCoordinates,
   onCellClick,
   onScaleChange,
   onOffsetChange
@@ -53,10 +59,14 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // 坐标标尺占用画布左/上边缘的边距
+    const coordLeft = showCoordinates ? 18 : 0;
+    const coordTop = showCoordinates ? 14 : 0;
+
     // 设置画布尺寸
-    const canvasWidth = gridDimensions.N * cellSize;
-    const canvasHeight = gridDimensions.M * cellSize;
-    
+    const canvasWidth = coordLeft + gridDimensions.N * cellSize;
+    const canvasHeight = coordTop + gridDimensions.M * cellSize;
+
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
     canvas.style.width = `${canvasWidth}px`;
@@ -69,15 +79,15 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
     for (let row = 0; row < gridDimensions.M; row++) {
       for (let col = 0; col < gridDimensions.N; col++) {
         const pixel = mappedPixelData[row][col];
-        const x = col * cellSize;
-        const y = row * cellSize;
+        const x = coordLeft + col * cellSize;
+        const y = coordTop + row * cellSize;
         const cellKey = `${row},${col}`;
 
         // 确定格子颜色
         let fillColor = pixel.color;
 
-        // 如果不是当前颜色，显示为灰度
-        if (pixel.color !== currentColor) {
+        // 逐色模式下非当前颜色显示为灰度；逐行模式全色显示
+        if (progressMode === 'color' && pixel.color !== currentColor) {
           // 转换为灰度
           const hex = pixel.color.replace('#', '');
           const r = parseInt(hex.substr(0, 2), 16);
@@ -91,11 +101,11 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
         ctx.fillStyle = fillColor;
         ctx.fillRect(x, y, cellSize, cellSize);
 
-        // 如果是已完成的格子且是当前颜色，添加勾选标记
-        if (completedCells.has(cellKey) && pixel.color === currentColor) {
+        // 已完成格子添加勾选标记（逐色模式只标当前色，逐行模式不限颜色）
+        if (completedCells.has(cellKey) && (progressMode === 'row' || pixel.color === currentColor)) {
           ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
           ctx.fillRect(x, y, cellSize, cellSize);
-          
+
           // 绘制勾选图标
           ctx.strokeStyle = '#fff';
           ctx.lineWidth = 2;
@@ -106,57 +116,93 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
           ctx.stroke();
         }
 
-        // 如果是推荐区域的一部分，添加高亮边框
-        const isInRecommendedRegion = recommendedRegion?.some(cell => 
-          cell.row === row && cell.col === col
-        );
-        if (isInRecommendedRegion) {
-          ctx.strokeStyle = '#ff4444';
-          ctx.lineWidth = 3;
-          ctx.setLineDash([5, 5]);
-          ctx.strokeRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
-          ctx.setLineDash([]);
+        // 推荐区域高亮仅用于逐色模式
+        if (progressMode === 'color') {
+          // 如果是推荐区域的一部分，添加高亮边框
+          const isInRecommendedRegion = recommendedRegion?.some(cell =>
+            cell.row === row && cell.col === col
+          );
+          if (isInRecommendedRegion) {
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+            ctx.setLineDash([]);
+          }
+
+          // 如果是推荐区域的中心点，添加特殊标记
+          if (recommendedCell && recommendedCell.row === row && recommendedCell.col === col && isInRecommendedRegion) {
+            // 绘制中心点标记
+            ctx.fillStyle = '#ff4444';
+            ctx.beginPath();
+            ctx.arc(x + cellSize / 2, y + cellSize / 2, 4, 0, 2 * Math.PI);
+            ctx.fill();
+          }
         }
-        
-        // 如果是推荐区域的中心点，添加特殊标记
-        if (recommendedCell && recommendedCell.row === row && recommendedCell.col === col && isInRecommendedRegion) {
-          // 绘制中心点标记
-          ctx.fillStyle = '#ff4444';
-          ctx.beginPath();
-          ctx.arc(x + cellSize / 2, y + cellSize / 2, 4, 0, 2 * Math.PI);
-          ctx.fill();
-        }
-
-
-
-
       }
+    }
+
+    // 逐行模式：压暗非当前行并高亮当前行
+    if (progressMode === 'row' && gridDimensions.M > 1) {
+      const gridWidth = gridDimensions.N * cellSize;
+      const currentRowTop = coordTop + currentRow * cellSize;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+      if (currentRow > 0) {
+        ctx.fillRect(coordLeft, coordTop, gridWidth, currentRow * cellSize);
+      }
+      if (currentRow < gridDimensions.M - 1) {
+        ctx.fillRect(coordLeft, currentRowTop + cellSize, gridWidth, (gridDimensions.M - currentRow - 1) * cellSize);
+      }
+      // 当前行高亮边线
+      ctx.strokeStyle = '#007acc';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(coordLeft + 1, currentRowTop + 1, gridWidth - 2, cellSize - 2);
     }
 
     // 绘制分区线（在所有格子绘制完成后）
     if (showSectionLines) {
       ctx.strokeStyle = sectionLineColor;
       ctx.lineWidth = 2;
-      
+
       // 绘制竖直分区线
       for (let col = gridSectionInterval; col < gridDimensions.N; col += gridSectionInterval) {
-        const x = col * cellSize;
+        const x = coordLeft + col * cellSize;
         ctx.beginPath();
-        ctx.moveTo(x, 0);
+        ctx.moveTo(x, coordTop);
         ctx.lineTo(x, canvasHeight);
         ctx.stroke();
       }
-      
+
       // 绘制水平分区线
       for (let row = gridSectionInterval; row < gridDimensions.M; row += gridSectionInterval) {
-        const y = row * cellSize;
+        const y = coordTop + row * cellSize;
         ctx.beginPath();
-        ctx.moveTo(0, y);
+        ctx.moveTo(coordLeft, y);
         ctx.lineTo(canvasWidth, y);
         ctx.stroke();
       }
     }
-  }, [mappedPixelData, gridDimensions, cellSize, currentColor, completedCells, recommendedCell, recommendedRegion, gridSectionInterval, showSectionLines, sectionLineColor]);
+
+    // 绘制坐标标尺（最上层，1 起始与进度提示一致）
+    if (showCoordinates) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '9px ui-monospace, monospace';
+      ctx.textBaseline = 'alphabetic';
+
+      // 顶部列号：每个分区间隔一处
+      ctx.textAlign = 'left';
+      for (let col = 0; col < gridDimensions.N; col += gridSectionInterval) {
+        ctx.fillText(String(col + 1), coordLeft + col * cellSize + 1, coordTop - 4);
+      }
+
+      // 左侧行号：逐行模式每行一处，逐色模式每个分区间隔一处
+      const rowStep = progressMode === 'row' ? 1 : gridSectionInterval;
+      for (let row = 0; row < gridDimensions.M; row += rowStep) {
+        const y = coordTop + row * cellSize + Math.min(cellSize - 3, cellSize / 2 + 3);
+        ctx.fillText(String(row + 1), 1, y);
+      }
+    }
+  }, [mappedPixelData, gridDimensions, cellSize, currentColor, completedCells, recommendedCell, recommendedRegion, gridSectionInterval, showSectionLines, sectionLineColor, progressMode, currentRow, showCoordinates]);
 
   // 处理触摸/鼠标事件
   const getEventPosition = useCallback((event: React.MouseEvent | React.TouchEvent) => {
@@ -182,14 +228,17 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
   }, [canvasScale]);
 
   const getGridPosition = useCallback((x: number, y: number) => {
-    const col = Math.floor(x / cellSize);
-    const row = Math.floor(y / cellSize);
-    
+    // 坐标标尺占用的边距不参与格子映射
+    const coordLeft = showCoordinates ? 18 : 0;
+    const coordTop = showCoordinates ? 14 : 0;
+    const col = Math.floor((x - coordLeft) / cellSize);
+    const row = Math.floor((y - coordTop) / cellSize);
+
     if (row >= 0 && row < gridDimensions.M && col >= 0 && col < gridDimensions.N) {
       return { row, col };
     }
     return null;
-  }, [cellSize, gridDimensions]);
+  }, [cellSize, gridDimensions, showCoordinates]);
 
   // 计算两指间距离
   const getTouchDistance = (touches: React.TouchList) => {

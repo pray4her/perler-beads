@@ -20,6 +20,10 @@ interface SettingsPanelProps {
   onSectionLineColorChange: (color: string) => void;
   enableCelebration: boolean;
   onEnableCelebrationChange: (enable: boolean) => void;
+  showCoordinates: boolean;
+  onShowCoordinatesChange: (show: boolean) => void;
+  wakeLockEnabled: boolean;
+  onWakeLockEnabledChange: (enable: boolean) => void;
   onClose: () => void;
 }
 
@@ -35,6 +39,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onSectionLineColorChange,
   enableCelebration,
   onEnableCelebrationChange,
+  showCoordinates,
+  onShowCoordinatesChange,
+  wakeLockEnabled,
+  onWakeLockEnabledChange,
   onClose
 }) => {
   const sectionLineColors = [
@@ -168,6 +176,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
               <label className="flex items-center justify-between">
                 <div>
+                  <div className="text-sm font-medium text-foreground">坐标标尺</div>
+                  <div className="text-xs text-muted-foreground">在画布边缘显示行列编号</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={showCoordinates}
+                  onChange={(e) => onShowCoordinatesChange(e.target.checked)}
+                  className="h-4 w-4 accent-primary rounded"
+                />
+              </label>
+
+              <label className="flex items-center justify-between">
+                <div>
                   <div className="text-sm font-medium text-foreground">庆祝动画</div>
                   <div className="text-xs text-muted-foreground">完成颜色时显示撒花效果</div>
                 </div>
@@ -175,6 +196,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   type="checkbox"
                   checked={enableCelebration}
                   onChange={(e) => onEnableCelebrationChange(e.target.checked)}
+                  className="h-4 w-4 accent-primary rounded"
+                />
+              </label>
+
+              <label className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-foreground">屏幕常亮</div>
+                  <div className="text-xs text-muted-foreground">制作时防止屏幕自动熄灭</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={wakeLockEnabled}
+                  onChange={(e) => onWakeLockEnabledChange(e.target.checked)}
                   className="h-4 w-4 accent-primary rounded"
                 />
               </label>
@@ -200,11 +234,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <div>
             <h3 className="text-base font-medium text-foreground mb-3">关于</h3>
             <div className="text-sm text-muted-foreground space-y-2">
-              <p>专心拼豆模式 v1.0</p>
-              <p>专为手机设计的拼豆助手</p>
+              <p>专心拼豆模式 v1.1</p>
+              <p>支持逐色 / 逐行两种推进方式</p>
               <div className="pt-2 text-xs space-y-1">
-                <p>提示：长按格子可以快速标记</p>
-                <p>提示：双指缩放可以查看细节</p>
+                <p>提示：单指拖动平移，双指缩放查看细节</p>
+                <p>桌面快捷键：空格 暂停/继续 · L 定位 · C 颜色面板</p>
+                <p>逐行模式：↑/↓ 切换当前行 · Esc 关闭面板</p>
               </div>
             </div>
           </div>

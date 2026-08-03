@@ -17,6 +17,18 @@ interface SnapshotRecord {
   document: EditorDocumentV1;
 }
 
+/** 专心模式的界面设置，随进度一并持久化；均为可选，旧记录没有该字段 */
+export interface FocusProgressSettings {
+  guidanceMode: "nearest" | "largest" | "edge-first";
+  gridSectionInterval: number;
+  showSectionLines: boolean;
+  sectionLineColor: string;
+  enableCelebration: boolean;
+  progressMode: "color" | "row";
+  showCoordinates: boolean;
+  wakeLockEnabled: boolean;
+}
+
 export interface FocusProgressRecord {
   projectId: string;
   revision: number;
@@ -24,6 +36,14 @@ export interface FocusProgressRecord {
   updatedAt: number;
   /** 内容哈希（FNV-1a）；旧记录没有该字段，恢复时回退到 revision 校验 */
   contentHash?: string;
+  /** 界面设置（引导/显示/推进模式）；旧记录没有该字段 */
+  settings?: FocusProgressSettings;
+  /** 计时状态；旧记录没有该字段 */
+  timer?: { totalElapsedTime: number; isPaused: boolean };
+  /** 中断时的当前颜色（hex）；旧记录没有该字段 */
+  currentColor?: string;
+  /** 中断时的当前行（逐行模式）；旧记录没有该字段 */
+  currentRow?: number;
 }
 
 interface PerlerDatabase extends DBSchema {

@@ -4,11 +4,14 @@ import { Progress } from '@/components/ui/progress';
 interface ProgressBarProps {
   progressPercentage: number;
   recommendedCell?: { row: number; col: number } | null;
+  /** 自定义提示文案（如逐行模式）；未传时按推荐格子显示 */
+  hintText?: string;
 }
 
 const ProgressBar: React.FC<ProgressBarProps> = ({
   progressPercentage,
-  recommendedCell
+  recommendedCell,
+  hintText
 }) => {
   return (
     <div className="h-10 bg-card border-b border-border px-4 py-2 flex items-center justify-between gap-4">
@@ -20,7 +23,9 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
       </div>
 
       <div className="text-xs text-muted-foreground shrink-0">
-        {recommendedCell ? (
+        {hintText ? (
+          <span>{hintText}</span>
+        ) : recommendedCell ? (
           <span>下一块 → {recommendedCell.row + 1},{recommendedCell.col + 1}</span>
         ) : (
           <span>已完成当前颜色</span>
