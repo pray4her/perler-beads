@@ -33,7 +33,6 @@ import {
   ZoomOut,
 } from "lucide-react";
 import React, {
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
@@ -43,6 +42,7 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import ResultPreviewPanel from "@/components/ResultPreviewPanel";
+import FieldHelp from "@/components/FieldHelp";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { countColors, getBoardSummary, type ManufacturingWarning } from "@/editor/analysis";
@@ -73,6 +73,7 @@ import { downloadBlob, exportPerlerProject, importPerlerProject } from "@/editor
 import { deleteProject, listProjects, loadProject, saveNamedSnapshot, saveProject, saveRecovery } from "@/editor/projectStorage";
 import { getColorMetrics, oklabDistance, uniquePaletteEntries } from "@/editor/palette";
 import {
+  clampSelectionDelta,
   combineSelections,
   createSelectionMask,
   invertSelection,
@@ -85,6 +86,7 @@ import { EditorStore } from "@/editor/store";
 import type {
   CanvasAnchor,
   CellPatch,
+  EditorCommand,
   EditorCommitResult,
   EditorDocumentV1,
   EditorPaletteEntry,
@@ -133,6 +135,8 @@ interface Gesture {
   /** Every cell under the stroke, including no-op same-color hits (preview only). */
   touched: Set<number>;
   pan?: { x: number; y: number; cameraX: number; cameraY: number };
+  /** Select-tool drag that moves the selection content instead of re-selecting. */
+  moveSelection?: boolean;
 }
 
 interface ClipboardPayload {
@@ -215,8 +219,45 @@ function normalizeBounds(start: CellPoint, end: CellPoint): SelectionBounds {
   };
 }
 
+/** Border cells of a bounds rect shifted by a delta; cheap drag-move preview. */
+function shiftedOutlinePoints(bounds: SelectionBounds, rowDelta: number, colDelta: number): CellPoint[] {
+  const startRow = bounds.startRow + rowDelta;
+  const endRow = bounds.endRow + rowDelta;
+  const startCol = bounds.startCol + colDelta;
+  const endCol = bounds.endCol + colDelta;
+  const points: CellPoint[] = [];
+  for (let row = startRow; row <= endRow; row++) {
+    for (let col = startCol; col <= endCol; col++) {
+      if (row === startRow || row === endRow || col === startCol || col === endCol) points.push({ row, col });
+    }
+  }
+  return points;
+}
+
 function downloadNamedBlob(blob: Blob, name: string) {
   downloadBlob(blob, name);
+}
+
+/** Stock input that stays responsive locally and commits a single history entry on blur. */
+function InventoryStockInput({ value, onCommit }: { value: number | undefined; onCommit: (next: number) => void }) {
+  const [draft, setDraft] = useState(value === undefined ? "" : String(value));
+  useEffect(() => setDraft(value === undefined ? "" : String(value)), [value]);
+  const commit = () => {
+    const next = Number(draft);
+    if (draft.trim() !== "" && Number.isFinite(next) && Math.max(0, next) !== value) onCommit(Math.max(0, next));
+    else setDraft(value === undefined ? "" : String(value));
+  };
+  return (
+    <input
+      type="number"
+      min="0"
+      placeholder="未设置"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+    />
+  );
 }
 
 function drawBlankCell(
@@ -357,12 +398,17 @@ export default function PixelEditorWorkspace({
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
   const storeRef = useRef<EditorStore | null>(null);
-  if (!storeRef.current) storeRef.current = new EditorStore(initialDocument, (result) => onCommitRef.current(result));
+  if (!storeRef.current) storeRef.current = new EditorStore(initialDocument, (result) => {
+    // Undo/redo of selection-aware commands (nudge, transform, …) restores the mask here.
+    if (result.selection !== undefined) setSelectionRef.current(result.selection);
+    onCommitRef.current(result);
+  });
   const store = storeRef.current;
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const document = snapshot.document;
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLElement>(null);
   const gridCanvasRef = useRef<HTMLCanvasElement>(null);
   const contentCanvasRef = useRef<HTMLCanvasElement>(null);
   const interactionCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -379,7 +425,6 @@ export default function PixelEditorWorkspace({
   const pointerFrameRef = useRef<number | null>(null);
   const drawFrameRef = useRef<number | null>(null);
   const spacePressedRef = useRef(false);
-  const editorFocusedRef = useRef(false);
   const selectionAnchorRef = useRef<CellPoint>({ row: 0, col: 0 });
   const lastSelectionRef = useRef<SelectionMask | null>(null);
   const clipboardRef = useRef<ClipboardPayload | null>(null);
@@ -387,12 +432,16 @@ export default function PixelEditorWorkspace({
   const pinchRef = useRef<{ distance: number; zoom: number; center: { x: number; y: number } } | null>(null);
   const referenceBitmapRef = useRef<ImageBitmap | null>(null);
   const cursorLabelRef = useRef<HTMLSpanElement>(null);
+  const fillInFlightRef = useRef(false);
+  const risksRequestRef = useRef(0);
 
   const [tool, setTool] = useState<EditorTool>("move");
   const [toolbarIndex, setToolbarIndex] = useState(0);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("color");
   const [activeCell, setActiveCell] = useState<CellPoint>({ row: 0, col: 0 });
   const [selection, setSelection] = useState<SelectionMask | null>(null);
+  // Stable handle so the store commit callback (created before this state exists) can restore selections.
+  const setSelectionRef = useRef(setSelection);
   const [selectionMode, setSelectionMode] = useState<SelectionCombineMode>("replace");
   const [selectedColor, setSelectedColor] = useState<EditorPaletteEntry>(() => {
     const first = currentColors[0] ?? paletteColors[0];
@@ -441,10 +490,38 @@ export default function PixelEditorWorkspace({
     store.execute({ label, beforeDocument: cloneEditorDocument(document), afterDocument: next });
   }, [document, store]);
 
-  const executePatches = useCallback((label: string, patches: CellPatch[]) => {
+  const clearSelectionState = useCallback(() => {
+    setSelection(null);
+    lastSelectionRef.current = null;
+    pendingShapeRef.current = null;
+    previewPointsRef.current = [];
+  }, []);
+
+  // Deselect but remember the mask so 重选 can bring it back (Esc / Ctrl+D path).
+  const deselect = useCallback(() => {
+    if (selection) {
+      lastSelectionRef.current = selection;
+      setSelection(null);
+    }
+  }, [selection]);
+
+  const invertCurrentSelection = useCallback(() => {
+    setSelection(invertSelection(selection ?? createSelectionMask(document.width, document.height)));
+  }, [document.height, document.width, selection]);
+
+  const executePatches = useCallback((label: string, patches: CellPatch[], selectionAfter?: SelectionMask | null, coalesceKey?: string) => {
+    // Skip no-ops up front: they must neither prompt nor discard redoable history.
+    const effective = patches.filter((patch) => patch.before !== patch.after);
+    if (effective.length === 0) return;
     if (snapshot.canRedo && !window.confirm("继续编辑会清除尚未重做的历史。是否继续？")) return;
-    if (store.execute({ label, patches })) setStatusMessage(`${label} · ${patches.length} 格`);
-  }, [snapshot.canRedo, store]);
+    const command: EditorCommand = { label, patches: effective };
+    if (selectionAfter !== undefined) {
+      command.selectionBefore = selection;
+      command.selectionAfter = selectionAfter;
+    }
+    if (coalesceKey) command.coalesceKey = coalesceKey;
+    if (store.execute(command)) setStatusMessage(`${label} · ${effective.length} 格`);
+  }, [selection, snapshot.canRedo, store]);
 
   const drawEditor = useCallback(() => {
     const current = store.getSnapshot().document;
@@ -783,8 +860,17 @@ export default function PixelEditorWorkspace({
   }, [document]);
 
   useEffect(() => {
-    void risksInWorker(document).then(setWarnings).catch(() => setWarnings([]));
+    // Ignore stale worker responses: only the latest request may update warnings.
+    const requestId = ++risksRequestRef.current;
+    void risksInWorker(document)
+      .then((result) => { if (risksRequestRef.current === requestId) setWarnings(result); })
+      .catch(() => { if (risksRequestRef.current === requestId) setWarnings([]); });
   }, [document]);
+
+  useEffect(() => {
+    // Ignored warning ids stop being meaningful once the underlying cells change.
+    setIgnoredWarnings(new Set());
+  }, [document.cells, document.id]);
 
   useEffect(() => {
     if (inspectorTab === "make") void listProjects().then(setProjects).catch(() => setProjects([]));
@@ -925,21 +1011,39 @@ export default function PixelEditorWorkspace({
     return points;
   }, [rectangleMode, strokeWidth]);
 
-  const applySelectionBounds = useCallback((start: CellPoint, end: CellPoint) => {
-    const incoming = rectangularSelection(document.width, document.height, normalizeBounds(start, end));
+  // Combine an incoming mask with the current selection; empty results auto-clear
+  // so the brush is never silently blocked by an invisible 0-cell selection.
+  const applyCombinedSelection = useCallback((incoming: SelectionMask) => {
     const next = selection ? combineSelections(selection, incoming, selectionMode) : incoming;
     if (selection) lastSelectionRef.current = selection;
-    setSelection(next);
+    const count = next.mask.reduce((sum, value) => sum + value, 0);
+    if (count === 0) {
+      setSelection(null);
+      setStatusMessage("选区为空，已清除");
+    } else {
+      setSelection(next);
+      setStatusMessage(`已选择 ${count} 格`);
+    }
+  }, [selection, selectionMode]);
+
+  const applySelectionBounds = useCallback((start: CellPoint, end: CellPoint) => {
+    applyCombinedSelection(rectangularSelection(document.width, document.height, normalizeBounds(start, end)));
     setInspectorTab("selection");
-    setStatusMessage(`已选择 ${next.mask.reduce((sum, value) => sum + value, 0)} 格`);
-  }, [document.height, document.width, selection, selectionMode]);
+  }, [applyCombinedSelection, document.height, document.width]);
 
   const processPointerMove = useCallback((x: number, y: number, shift: boolean, alt: boolean) => {
     const point = pointFromClient(x, y);
     hoverRef.current = point;
     if (cursorLabelRef.current) cursorLabelRef.current.textContent = point ? `行 ${point.row + 1} · 列 ${point.col + 1}` : "指针位于画布外";
     const gesture = activeGestureRef.current;
-    if (!gesture) return requestDraw();
+    if (!gesture) {
+      // Rubber-band feedback while a two-step shape/selection waits for its endpoint.
+      const pending = pendingShapeRef.current;
+      if (pending && point) {
+        previewPointsRef.current = shapePoints(pending.tool, pending.start, point, shift, alt);
+      }
+      return requestDraw();
+    }
     if (gesture.pan) {
       cameraRef.current.x = gesture.pan.cameraX + x - gesture.pan.x;
       cameraRef.current.y = gesture.pan.cameraY + y - gesture.pan.y;
@@ -947,6 +1051,16 @@ export default function PixelEditorWorkspace({
       return requestDraw();
     }
     if (!point) return;
+    if (gesture.moveSelection) {
+      // Drag-move: preview the selection bounds shifted by the clamped delta.
+      gesture.last = point;
+      gesture.moved ||= point.row !== gesture.start.row || point.col !== gesture.start.col;
+      if (selection?.bounds) {
+        const clamped = clampSelectionDelta(selection, point.row - gesture.start.row, point.col - gesture.start.col);
+        previewPointsRef.current = shiftedOutlinePoints(selection.bounds, clamped.rowDelta, clamped.colDelta);
+      }
+      return requestDraw();
+    }
     gesture.moved ||= point.row !== gesture.start.row || point.col !== gesture.start.col;
     if (gesture.tool === "brush" || gesture.tool === "eraser") brushSegment(gesture, point);
     else if (SHAPE_TOOLS.has(gesture.tool)) {
@@ -954,10 +1068,9 @@ export default function PixelEditorWorkspace({
       gesture.last = point;
       requestDraw();
     }
-  }, [brushSegment, pointFromClient, requestDraw, shapePoints]);
+  }, [brushSegment, pointFromClient, requestDraw, selection, shapePoints]);
 
   const handlePointerDown = async (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    editorFocusedRef.current = true;
     event.currentTarget.focus();
     if (event.pointerType === "touch") {
       touchPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -987,9 +1100,18 @@ export default function PixelEditorWorkspace({
       return;
     }
     if (tool === "fill") {
+      if (fillInFlightRef.current) return;
+      fillInFlightRef.current = true;
       setStatusMessage("正在分析填充区域…");
-      const patches = await fillInWorker(document, point.row, point.col, selectedPaletteIndex(), fillMode, fillScope, selection);
-      executePatches(fillMode === "all" ? "替换全部同色" : "填充连通区域", patches);
+      const startRevision = document.revision;
+      try {
+        const patches = await fillInWorker(document, point.row, point.col, selectedPaletteIndex(), fillMode, fillScope, selection);
+        // The document may have changed (edit/undo) while the worker ran; stale patches would corrupt it.
+        if (store.getSnapshot().document.revision !== startRevision) setStatusMessage("填充期间文档已修改，结果已丢弃");
+        else executePatches(fillMode === "all" ? "替换全部同色" : "填充连通区域", patches);
+      } finally {
+        fillInFlightRef.current = false;
+      }
       return;
     }
     if (tool === "stamp" && document.stamps[0]) {
@@ -1007,6 +1129,12 @@ export default function PixelEditorWorkspace({
       return;
     }
     const pending = pendingShapeRef.current;
+    if (tool === "select" && selection && !pending && selection.mask[point.row * document.width + point.col]) {
+      // Pointerdown inside the selection starts a content-move drag (Alt = copy on release);
+      // outside the selection keeps the current behavior of starting a new selection.
+      activeGestureRef.current = { pointerId: event.pointerId, tool: "select", start: point, last: point, moved: false, fromPending: false, patches: new Map(), touched: new Set(), moveSelection: true };
+      return;
+    }
     const fromPending = Boolean(pending && pending.tool === tool);
     const start = fromPending ? pending!.start : point;
     activeGestureRef.current = { pointerId: event.pointerId, tool, start, last: point, moved: false, fromPending, patches: new Map(), touched: new Set() };
@@ -1053,6 +1181,15 @@ export default function PixelEditorWorkspace({
     }
     if (gesture.tool === "brush" || gesture.tool === "eraser") {
       executePatches(toolLabel(gesture.tool), Array.from(gesture.patches.values()));
+    } else if (gesture.moveSelection) {
+      if (gesture.moved) {
+        // Same command path as nudge: clamps at edges, coalesces, snapshots the selection.
+        nudgeSelection(gesture.last.row - gesture.start.row, gesture.last.col - gesture.start.col, event.altKey);
+      } else {
+        // Plain click inside the selection: fall back to starting a two-step selection here.
+        pendingShapeRef.current = { tool: "select", start: gesture.start };
+        setStatusMessage("选择起点已设置；点击终点或按 Enter 确认");
+      }
     } else if (SHAPE_TOOLS.has(gesture.tool)) {
       if (!gesture.moved && !gesture.fromPending) {
         pendingShapeRef.current = { tool: gesture.tool as ShapeTool, start: gesture.start };
@@ -1103,8 +1240,7 @@ export default function PixelEditorWorkspace({
       const after = clipboard.cells[sourceIndex];
       if (after !== document.cells[index]) patches.push({ index, before: document.cells[index], after });
     }
-    executePatches("粘贴选区", patches);
-    setSelection(rectangularSelection(document.width, document.height, {
+    executePatches("粘贴选区", patches, rectangularSelection(document.width, document.height, {
       startRow: activeCell.row,
       startCol: activeCell.col,
       endRow: Math.min(document.height - 1, activeCell.row + clipboard.height - 1),
@@ -1116,7 +1252,7 @@ export default function PixelEditorWorkspace({
     if (!selection) return;
     const patches: CellPatch[] = [];
     for (let index = 0; index < selection.mask.length; index++) if (selection.mask[index] && document.cells[index]) patches.push({ index, before: document.cells[index], after: 0 });
-    executePatches("删除选区", patches);
+    executePatches("删除选区", patches, selection);
   }, [document, executePatches, selection]);
 
   const cutSelection = useCallback(() => {
@@ -1126,14 +1262,21 @@ export default function PixelEditorWorkspace({
 
   const nudgeSelection = useCallback((rowDelta: number, colDelta: number, copy = false) => {
     if (!selection) return;
-    executePatches(copy ? "复制并移动选区" : "移动选区", moveSelectionPatches(document, selection, rowDelta, colDelta, copy));
-    setSelection(translateSelection(selection, rowDelta, colDelta));
+    // Clamp at document edges so pushing a selection against the border never crops cells.
+    const clamped = clampSelectionDelta(selection, rowDelta, colDelta);
+    if (!clamped.rowDelta && !clamped.colDelta) return;
+    executePatches(
+      copy ? "复制并移动选区" : "移动选区",
+      moveSelectionPatches(document, selection, clamped.rowDelta, clamped.colDelta, copy),
+      translateSelection(selection, clamped.rowDelta, clamped.colDelta),
+      "selection-nudge",
+    );
   }, [document, executePatches, selection]);
 
   const transformSelection = useCallback((transform: "flip-horizontal" | "flip-vertical" | "rotate-90" | "rotate-180") => {
     if (!selection) return;
     const result = transformSelectionDocument(document, selection, transform);
-    executePatches(transform === "flip-horizontal" ? "水平翻转" : transform === "flip-vertical" ? "垂直翻转" : transform === "rotate-90" ? "旋转 90°" : "旋转 180°", result.patches);
+    executePatches(transform === "flip-horizontal" ? "水平翻转" : transform === "flip-vertical" ? "垂直翻转" : transform === "rotate-90" ? "旋转 90°" : "旋转 180°", result.patches, result.selection);
   }, [document, executePatches, selection]);
 
   const createStamp = useCallback(() => {
@@ -1147,8 +1290,12 @@ export default function PixelEditorWorkspace({
     setTool("stamp");
   }, [copySelection, document, executeStructural, selection?.bounds]);
 
-  const handleCanvasKeyDown = (event: ReactKeyboardEvent<HTMLCanvasElement>) => {
+  const handleEditorKeyDown = useCallback((event: KeyboardEvent) => {
     if (isTextInput(event.target)) return;
+    // Only while focus is inside the editor shell — dialogs and page chrome keep their keys.
+    if (event.target instanceof Node && shellRef.current && !shellRef.current.contains(event.target)) return;
+    // Leave Enter/Space to focused buttons and links so panel controls keep native activation.
+    if ((event.key === "Enter" || event.code === "Space") && event.target instanceof HTMLElement && event.target.closest("button, a")) return;
     const lower = event.key.toLowerCase();
     const command = event.ctrlKey || event.metaKey;
     if (command && lower === "z") { event.preventDefault(); if (event.shiftKey) store.redo(); else store.undo(); return; }
@@ -1157,7 +1304,14 @@ export default function PixelEditorWorkspace({
     if (command && lower === "c") { event.preventDefault(); copySelection(); return; }
     if (command && lower === "x") { event.preventDefault(); cutSelection(); return; }
     if (command && lower === "v") { event.preventDefault(); pasteSelection(); return; }
-    if (event.code === "Space") spacePressedRef.current = true;
+    if (command && lower === "d") { event.preventDefault(); deselect(); return; }
+    if (command && event.shiftKey && lower === "i") { event.preventDefault(); invertCurrentSelection(); return; }
+    if (event.code === "Space") {
+      // Space is hold-to-pan only; Enter remains the paint/confirm key.
+      event.preventDefault();
+      spacePressedRef.current = true;
+      return;
+    }
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
       event.preventDefault();
       const rowDelta = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
@@ -1166,7 +1320,7 @@ export default function PixelEditorWorkspace({
       else {
         const next = { row: Math.max(0, Math.min(document.height - 1, activeCell.row + rowDelta)), col: Math.max(0, Math.min(document.width - 1, activeCell.col + colDelta)) };
         setActiveCell(next);
-        if (event.shiftKey) setSelection(rectangularSelection(document.width, document.height, normalizeBounds(selectionAnchorRef.current, next)));
+        if (event.shiftKey) applyCombinedSelection(rectangularSelection(document.width, document.height, normalizeBounds(selectionAnchorRef.current, next)));
         else selectionAnchorRef.current = next;
       }
       return;
@@ -1175,12 +1329,14 @@ export default function PixelEditorWorkspace({
     if (event.key === "Escape") {
       pendingShapeRef.current = null;
       previewPointsRef.current = [];
-      if (selection) { lastSelectionRef.current = selection; setSelection(null); }
+      // Abort an in-flight gesture: the pending pointerup finds no gesture and commits nothing.
+      activeGestureRef.current = null;
+      deselect();
       setStatusMessage("已取消当前操作");
       requestDraw();
       return;
     }
-    if (event.key === "Enter" || event.code === "Space") {
+    if (event.key === "Enter") {
       event.preventDefault();
       const pending = pendingShapeRef.current;
       if (pending) {
@@ -1196,7 +1352,18 @@ export default function PixelEditorWorkspace({
       const shortcuts: Record<string, EditorTool> = { v: "move", b: "brush", e: "eraser", i: "eyedropper", g: "fill", l: "line", r: "rectangle", o: "ellipse", s: "select", t: "stamp" };
       if (shortcuts[lower]) { event.preventDefault(); setTool(shortcuts[lower]); }
     }
-  };
+  }, [activeCell, applyCombinedSelection, applySelectionBounds, brushShape, brushSize, clearSelected, copySelection, cutSelection, deselect, document, executePatches, invertCurrentSelection, nudgeSelection, pasteSelection, requestDraw, selectedPaletteIndex, selection, shapePoints, shortcutsEnabled, store, tool]);
+
+  // Shortcuts live on window so they keep working after panel buttons take focus.
+  useEffect(() => {
+    const handleKeyUp = (event: KeyboardEvent) => { if (event.code === "Space") spacePressedRef.current = false; };
+    window.addEventListener("keydown", handleEditorKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleEditorKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [handleEditorKeyDown]);
 
   const updateDocumentSettings = <Key extends keyof EditorDocumentV1>(key: Key, value: EditorDocumentV1[Key], label: string) => {
     const next = cloneEditorDocument(document);
@@ -1261,6 +1428,7 @@ export default function PixelEditorWorkspace({
     try {
       const imported = await importPerlerProject(file);
       executeStructural(`导入项目：${imported.name}`, imported);
+      clearSelectionState();
       fitCanvas("canvas");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "项目导入失败");
@@ -1302,7 +1470,8 @@ export default function PixelEditorWorkspace({
       <button key={`${prefix}${entry.key}-${entry.color}`} type="button" className={active ? "is-active" : ""} onClick={() => {
         setSelectedColor(entry);
         setRecentColors((items) => uniquePaletteEntries([entry, ...items]).slice(0, 12));
-        setTool("brush");
+        // Picking a color implies painting next — except with the select tool, which keeps its context.
+        if (tool !== "select") setTool("brush");
       }} onDoubleClick={() => setFavorites((items) => {
         const next = new Set(items);
         const id = entry.color.toUpperCase();
@@ -1322,9 +1491,8 @@ export default function PixelEditorWorkspace({
     : 0;
 
   return (
-    <section className="pixel-editor-shell" aria-label="拼豆编辑工作台" onFocus={() => { editorFocusedRef.current = true; }} onBlur={(event) => {
+    <section ref={shellRef} className="pixel-editor-shell" aria-label="拼豆编辑工作台" onBlur={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget)) {
-        editorFocusedRef.current = false;
         spacePressedRef.current = false;
         if (activeGestureRef.current) {
           activeGestureRef.current = null;
@@ -1357,6 +1525,8 @@ export default function PixelEditorWorkspace({
       <div className="pixel-editor-layout">
         <aside className="pixel-editor-tools" role="toolbar" aria-label="画布工具" aria-orientation="vertical" onKeyDown={(event) => {
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          // Toolbar owns arrow-key roving; keep it from reaching the window-level editor shortcuts.
+          event.stopPropagation();
           event.preventDefault();
           const next = (toolbarIndex + (event.key === "ArrowDown" ? 1 : -1) + toolDefinitions.length) % toolDefinitions.length;
           setToolbarIndex(next);
@@ -1391,8 +1561,6 @@ export default function PixelEditorWorkspace({
               aria-colcount={document.width}
               aria-activedescendant="editor-active-cell"
               aria-describedby="pixel-editor-canvas-help"
-              onKeyDown={handleCanvasKeyDown}
-              onKeyUp={(event) => { if (event.code === "Space") spacePressedRef.current = false; }}
               onPointerDown={(event) => void handlePointerDown(event)}
               onPointerMove={handlePointerMove}
               onPointerUp={(event) => finishPointer(event)}
@@ -1414,7 +1582,7 @@ export default function PixelEditorWorkspace({
             }} />
           </div>
           <div className="pixel-editor-statusbar"><span>{toolLabel(tool)}</span><span ref={cursorLabelRef}>行 {activeCell.row + 1} · 列 {activeCell.col + 1}</span><span>选区 {selectionCount || "—"}</span><span role="status" aria-live="polite">{statusMessage}</span><div className="pixel-editor-zoom"><button type="button" onClick={() => zoomAt(cameraRef.current.zoom / 1.2)} aria-label="缩小"><ZoomOut className="h-4 w-4" /></button><button type="button" onClick={() => zoomAt(cameraRef.current.previousZoom)}>{Math.round(cameraRef.current.zoom * 100)}%</button><button type="button" onClick={() => zoomAt(cameraRef.current.zoom * 1.2)} aria-label="放大"><ZoomIn className="h-4 w-4" /></button></div></div>
-          <span id="pixel-editor-canvas-help" className="sr-only">滚轮缩放画布；方向键移动活动格；Enter 或空格绘制；Shift 加方向键扩展选择；Control A、X、C、V 管理选区；Escape 取消。</span>
+          <span id="pixel-editor-canvas-help" className="sr-only">滚轮缩放画布；方向键移动活动格或选区；Enter 绘制或确认；按住空格拖动画布；Shift 加方向键扩展选择；Control A、X、C、V 管理选区；Control D 取消选择；Control Shift I 反选；选择工具在选区内拖动可移动内容；Escape 取消。</span>
         </div>
 
         <aside className="pixel-editor-inspector">
@@ -1445,20 +1613,25 @@ export default function PixelEditorWorkspace({
               <div><strong>当前选区</strong><p>{selection?.bounds ? `${selectionCount} 格 · ${selection.bounds.endCol - selection.bounds.startCol + 1} × ${selection.bounds.endRow - selection.bounds.startRow + 1}` : "拖拽或点击起点和终点建立选择。"}</p></div>
               <div className="editor-action-grid"><button type="button" disabled={!selection} onClick={cutSelection}><Scissors className="h-4 w-4" />剪切</button><button type="button" disabled={!selection} onClick={copySelection}><Copy className="h-4 w-4" />原位复制</button><button type="button" disabled={!clipboardRef.current} onClick={pasteSelection}><ClipboardPaste className="h-4 w-4" />粘贴</button><button type="button" disabled={!selection} onClick={clearSelected}><Trash2 className="h-4 w-4" />删除</button><button type="button" disabled={!selection} onClick={() => transformSelection("flip-horizontal")}><FlipHorizontal className="h-4 w-4" />水平翻转</button><button type="button" disabled={!selection} onClick={() => transformSelection("flip-vertical")}><FlipVertical className="h-4 w-4" />垂直翻转</button><button type="button" disabled={!selection} onClick={() => transformSelection("rotate-90")}><RotateCw className="h-4 w-4" />旋转 90°</button><button type="button" disabled={!selection} onClick={createStamp}><Stamp className="h-4 w-4" />创建图章</button></div>
               <div className="editor-nudge-grid"><span /><button type="button" onClick={() => nudgeSelection(-1,0)}><ArrowUp className="h-4 w-4" /></button><span /><button type="button" onClick={() => nudgeSelection(0,-1)}><ArrowLeft className="h-4 w-4" /></button><button type="button" onClick={() => nudgeSelection(1,0)}><ArrowDown className="h-4 w-4" /></button><button type="button" onClick={() => nudgeSelection(0,1)}><ArrowRight className="h-4 w-4" /></button></div>
-              <div className="editor-action-grid"><button type="button" onClick={() => setSelection(invertSelection(selection ?? createSelectionMask(document.width, document.height)))}>反选</button><button type="button" onClick={() => setSelection(selectNonTransparent(document.width, document.height, document.cells))}>非透明内容</button><button type="button" onClick={() => setSelection(selectSameColor(document.width, document.height, document.cells, currentEntryIndex))}>相同颜色</button><button type="button" disabled={!lastSelectionRef.current} onClick={() => setSelection(lastSelectionRef.current)}>重选</button></div>
-              <Button variant="outline" disabled={!selection} onClick={() => { if (!selection?.bounds) return; executeStructural("裁剪到选区", cropEditorDocument(document, selection.bounds)); setSelection(null); }}><Crop className="h-4 w-4" />裁剪到选区</Button>
+              <div className="editor-action-grid"><button type="button" onClick={invertCurrentSelection}>反选</button><button type="button" onClick={() => setSelection(selectNonTransparent(document.width, document.height, document.cells))}>非透明内容</button><button type="button" onClick={() => setSelection(selectSameColor(document.width, document.height, document.cells, currentEntryIndex))}>相同颜色</button><button type="button" disabled={!lastSelectionRef.current} onClick={() => {
+                const last = lastSelectionRef.current;
+                // A mask captured before a document replace has stale dimensions; ignore it.
+                if (!last || last.width !== document.width || last.height !== document.height) return;
+                setSelection(last);
+              }}>重选</button></div>
+              <Button variant="outline" disabled={!selection} onClick={() => { if (!selection?.bounds) return; executeStructural("裁剪到选区", cropEditorDocument(document, selection.bounds)); clearSelectionState(); }}><Crop className="h-4 w-4" />裁剪到选区</Button>
             </div>}
 
             {inspectorTab === "canvas" && <div className="editor-inspector-section">
               <div><strong>视图</strong><p>网格和色号会按缩放自动降低噪声，也可强制显示或隐藏。</p></div>
               <div className="editor-field-row"><div className="editor-field"><Label>网格</Label><select className="editor-input" value={document.display.gridVisibility} onChange={(event) => updateDocumentSettings("display", { ...document.display, gridVisibility: event.target.value as EditorDocumentV1["display"]["gridVisibility"] }, "调整网格显示")}><option value="auto">自动</option><option value="always">始终</option><option value="hidden">隐藏</option></select></div><div className="editor-field"><Label>色号</Label><select className="editor-input" value={document.display.codeVisibility} onChange={(event) => updateDocumentSettings("display", { ...document.display, codeVisibility: event.target.value as EditorDocumentV1["display"]["codeVisibility"] }, "调整色号显示")}><option value="auto">自动</option><option value="always">始终</option><option value="hidden">隐藏</option></select></div></div>
-              <div className="editor-field"><Label htmlFor="major-grid">主网格间隔</Label><input id="major-grid" className="editor-input" type="number" min="1" max="50" value={document.display.majorGridInterval} onChange={(event) => updateDocumentSettings("display", { ...document.display, majorGridInterval: Math.max(1, Number(event.target.value)) }, "调整主网格")}/></div>
+              <div className="editor-field"><FieldHelp label="主网格间隔" htmlFor="major-grid">每隔 N 格显示一条加粗主线，把画布划分成小区块，编辑和数格定位时更不容易看花。与下载图纸的「网格线间隔」作用类似。</FieldHelp><input id="major-grid" className="editor-input" type="number" min="1" max="50" value={document.display.majorGridInterval} onChange={(event) => updateDocumentSettings("display", { ...document.display, majorGridInterval: Math.max(1, Number(event.target.value)) }, "调整主网格")}/></div>
               <div className="editor-action-grid"><button type="button" onClick={() => fitCanvas("canvas")}>适应画布</button><button type="button" disabled={!selection} onClick={() => fitCanvas("selection")}>适应选区</button><button type="button" onClick={() => zoomAt(1)}>100%</button><button type="button" onClick={() => zoomAt(cameraRef.current.previousZoom)}>上次缩放</button></div>
               <div><strong>画布尺寸</strong><p>九点锚定决定现有内容固定在哪一侧；新增区域保持透明。</p></div>
               <div className="editor-field-row"><div className="editor-field"><Label htmlFor="canvas-width">宽</Label><input id="canvas-width" className="editor-input" type="number" min="1" max="500" value={resizeWidth} onChange={(event) => setResizeWidth(Number(event.target.value))}/></div><div className="editor-field"><Label htmlFor="canvas-height">高</Label><input id="canvas-height" className="editor-input" type="number" min="1" max="500" value={resizeHeight} onChange={(event) => setResizeHeight(Number(event.target.value))}/></div></div>
               <div className="editor-anchor-grid">{(["top-left","top","top-right","left","center","right","bottom-left","bottom","bottom-right"] as CanvasAnchor[]).map((anchor) => <button type="button" key={anchor} aria-label={`锚点 ${anchor}`} className={resizeAnchor === anchor ? "is-active" : ""} onClick={() => setResizeAnchor(anchor)} />)}</div>
-              <Button onClick={() => { executeStructural("调整画布尺寸", resizeEditorDocument(document, resizeWidth, resizeHeight, resizeAnchor)); setSelection(null); }}>应用尺寸</Button>
-              <Button variant="outline" onClick={() => { executeStructural("裁剪透明边缘", trimTransparent(document)); setSelection(null); }}>裁剪透明边缘</Button>
+              <Button onClick={() => { executeStructural("调整画布尺寸", resizeEditorDocument(document, resizeWidth, resizeHeight, resizeAnchor)); clearSelectionState(); }}>应用尺寸</Button>
+              <Button variant="outline" onClick={() => { executeStructural("裁剪透明边缘", trimTransparent(document)); clearSelectionState(); }}>裁剪透明边缘</Button>
               <div><strong>对称轴</strong><p>水平轴列 {symmetryCol + 1} · 垂直轴行 {symmetryRow + 1}</p></div>
               <div className="editor-field-row"><input className="editor-input" type="number" min="0" max={document.width - 1} step="0.5" value={symmetryCol} onChange={(event) => setSymmetryCol(Number(event.target.value))}/><input className="editor-input" type="number" min="0" max={document.height - 1} step="0.5" value={symmetryRow} onChange={(event) => setSymmetryRow(Number(event.target.value))}/></div>
               <label className="editor-check"><input type="checkbox" checked={document.display.tiledPreview} onChange={(event) => updateDocumentSettings("display", { ...document.display, tiledPreview: event.target.checked }, event.target.checked ? "开启平铺预览" : "关闭平铺预览")} />平铺预览与环绕绘制</label>
@@ -1467,14 +1640,14 @@ export default function PixelEditorWorkspace({
 
             {inspectorTab === "make" && <div className="editor-inspector-section">
               <div><strong>拼豆板与尺寸</strong><p>{boardSummary.boardColumns} × {boardSummary.boardRows} 块板 · 约 {(boardSummary.physicalWidthMm / 10).toFixed(1)} × {(boardSummary.physicalHeightMm / 10).toFixed(1)} cm · {boardSummary.total} 颗</p></div>
-              <div className="editor-field-row"><div className="editor-field"><Label>板规格</Label><select className="editor-input" value={document.board.preset} onChange={(event) => { const preset = event.target.value as EditorDocumentV1["board"]["preset"]; const size = preset === "29x29" ? 29 : preset === "14x14" ? 14 : document.board.columns; updateDocumentSettings("board", { ...document.board, preset, columns: size, rows: size }, "调整拼豆板"); }}><option value="29x29">29 × 29</option><option value="14x14">14 × 14</option><option value="custom">自定义</option></select></div><div className="editor-field"><Label>间距 mm</Label><input className="editor-input" type="number" min="1" max="20" step="0.1" value={document.board.pitchMm} onChange={(event) => updateDocumentSettings("board", { ...document.board, pitchMm: Number(event.target.value) }, "调整物理间距")}/></div></div>
+              <div className="editor-field-row"><div className="editor-field"><Label>板规格</Label><select className="editor-input" value={document.board.preset} onChange={(event) => { const preset = event.target.value as EditorDocumentV1["board"]["preset"]; const size = preset === "29x29" ? 29 : preset === "14x14" ? 14 : document.board.columns; updateDocumentSettings("board", { ...document.board, preset, columns: size, rows: size }, "调整拼豆板"); }}><option value="29x29">29 × 29</option><option value="14x14">14 × 14</option><option value="custom">自定义</option></select></div><div className="editor-field"><FieldHelp label="间距 mm">相邻两颗豆子的中心距离，只用于把格数换算成成品物理尺寸，不影响格子数量。标准 5mm 小豆（如 Mard、Perler 中豆）填 5；大豆填 10。</FieldHelp><input className="editor-input" type="number" min="1" max="20" step="0.1" value={document.board.pitchMm} onChange={(event) => updateDocumentSettings("board", { ...document.board, pitchMm: Number(event.target.value) }, "调整物理间距")}/></div></div>
               {document.board.preset === "custom" && <div className="editor-field-row"><input className="editor-input" type="number" min="1" max="100" value={document.board.columns} onChange={(event) => updateDocumentSettings("board", { ...document.board, columns: Number(event.target.value) }, "调整板宽")}/><input className="editor-input" type="number" min="1" max="100" value={document.board.rows} onChange={(event) => updateDocumentSettings("board", { ...document.board, rows: Number(event.target.value) }, "调整板高")}/></div>}
               <div className="editor-board-list">{boardSummary.boards.map((board) => <span key={board.number}><strong>板 {board.number}</strong><small>第 {board.row + 1} 行 / {board.col + 1} 列 · {board.count} 颗</small></span>)}</div>
               <div><strong>库存</strong><p>库存按“{document.colorSystem}＋色号”记录，不与其他品牌合并。</p></div>
               <div className="editor-inventory-list">{usage.map((item) => {
                 const inventoryKey = `${document.colorSystem}:${item.palette.key}`;
                 const stock = document.inventory[inventoryKey];
-                return <label key={item.index}><span style={{ backgroundColor: item.palette.color }} /><strong>{item.palette.key}</strong><small>需要 {item.count}</small><input type="number" min="0" placeholder="未设置" value={stock ?? ""} onChange={(event) => updateDocumentSettings("inventory", { ...document.inventory, [inventoryKey]: Math.max(0, Number(event.target.value)) }, `更新 ${item.palette.key} 库存`)} />{stock !== undefined && stock < item.count ? <em>缺 {item.count - stock}</em> : <em>充足</em>}</label>;
+                return <label key={item.index}><span style={{ backgroundColor: item.palette.color }} /><strong>{item.palette.key}</strong><small>需要 {item.count}</small><InventoryStockInput value={stock} onCommit={(next) => updateDocumentSettings("inventory", { ...document.inventory, [inventoryKey]: next }, `更新 ${item.palette.key} 库存`)} />{stock !== undefined && stock < item.count ? <em>缺 {item.count - stock}</em> : <em>充足</em>}</label>;
               })}</div>
               <div><strong>制作风险</strong><p>{activeWarnings.length ? `发现 ${activeWarnings.length} 项提示；这些提示不会阻止导出。` : "未发现明显的孤立或脆弱结构。"}</p></div>
               <div className="editor-warning-list">{activeWarnings.slice(0, 8).map((warning) => <button type="button" key={warning.id} onClick={() => { const index = warning.indices[0]; setActiveCell({ row: Math.floor(index / document.width), col: index % document.width }); setIgnoredWarnings((items) => new Set(items).add(warning.id)); }}>{warning.message}<small>定位并忽略</small></button>)}</div>
@@ -1483,7 +1656,7 @@ export default function PixelEditorWorkspace({
               <input ref={projectInputRef} className="sr-only" type="file" accept=".perler,application/x-perler-project" onChange={(event) => void importProjectFile(event.target.files?.[0])}/><Button variant="outline" onClick={() => projectInputRef.current?.click()}>导入 .perler</Button>
               <div><strong>参考图</strong><p>参考层仅用于对照，不计入用量或产品导出。</p></div>
               <input ref={referenceInputRef} className="sr-only" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; updateDocumentSettings("reference", { blob: file, fileName: file.name, mimeType: file.type, opacity: .35, mode: "overlay" }, "设置参考图"); }}/><div className="editor-action-grid"><button type="button" onClick={() => referenceInputRef.current?.click()}>选择参考图</button><select className="editor-input" value={document.reference?.mode ?? "hidden"} onChange={(event) => updateDocumentSettings("reference", { ...document.reference, opacity: document.reference?.opacity ?? .35, mode: event.target.value as NonNullable<EditorDocumentV1["reference"]>["mode"] }, "调整参考图模式")}><option value="hidden">隐藏</option><option value="original">原图</option><option value="grid">网格</option><option value="overlay">叠加</option><option value="difference">差异</option></select></div>
-              <div><strong>项目库</strong><p>最近项目保存在当前浏览器中，可打开、复制、重命名或导出。</p></div><div className="editor-project-list">{projects.map((project) => <div key={project.id}><button type="button" onClick={() => void loadProject(project.id).then((loaded) => loaded && executeStructural(`打开项目：${loaded.name}`, loaded))}><strong>{project.name}</strong><small>{project.width}×{project.height} · {new Date(project.updatedAt).toLocaleString("zh-CN")}</small></button><span className="editor-project-actions"><button type="button" aria-label={`复制 ${project.name}`} onClick={() => void duplicateStoredProject(project.id)}><Copy className="h-4 w-4" /></button><button type="button" aria-label={`重命名 ${project.name}`} onClick={() => void renameStoredProject(project.id)}>改</button><button type="button" aria-label={`导出 ${project.name}`} onClick={() => void exportStoredProject(project.id)}><Download className="h-4 w-4" /></button><button type="button" aria-label={`删除 ${project.name}`} onClick={() => void deleteProject(project.id).then(() => listProjects()).then(setProjects)}><Trash2 className="h-4 w-4" /></button></span></div>)}</div>
+              <div><strong>项目库</strong><p>最近项目保存在当前浏览器中，可打开、复制、重命名或导出。</p></div><div className="editor-project-list">{projects.map((project) => <div key={project.id}><button type="button" onClick={() => void loadProject(project.id).then((loaded) => { if (!loaded) return; executeStructural(`打开项目：${loaded.name}`, loaded); clearSelectionState(); })}><strong>{project.name}</strong><small>{project.width}×{project.height} · {new Date(project.updatedAt).toLocaleString("zh-CN")}</small></button><span className="editor-project-actions"><button type="button" aria-label={`复制 ${project.name}`} onClick={() => void duplicateStoredProject(project.id)}><Copy className="h-4 w-4" /></button><button type="button" aria-label={`重命名 ${project.name}`} onClick={() => void renameStoredProject(project.id)}>改</button><button type="button" aria-label={`导出 ${project.name}`} onClick={() => void exportStoredProject(project.id)}><Download className="h-4 w-4" /></button><button type="button" aria-label={`删除 ${project.name}`} onClick={() => void deleteProject(project.id).then(() => listProjects()).then(setProjects)}><Trash2 className="h-4 w-4" /></button></span></div>)}</div>
             </div>}
 
             {inspectorTab === "preview" && <ResultPreviewPanel grid={grid} settings={document.preview} onSettingsChange={(preview) => updateDocumentSettings("preview", preview, "调整展示预览")} />}

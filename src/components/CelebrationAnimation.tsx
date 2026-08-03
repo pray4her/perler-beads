@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 interface CelebrationAnimationProps {
   isVisible: boolean;
@@ -25,6 +25,11 @@ const CelebrationAnimation: React.FC<CelebrationAnimationProps> = ({
 }) => {
   const [particles, setParticles] = useState<Particle[]>([]);
   const [confetti, setConfetti] = useState<Particle[]>([]);
+  // 保持最新的 onComplete，避免父组件回调变化导致动画中途重启
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -113,14 +118,14 @@ const CelebrationAnimation: React.FC<CelebrationAnimationProps> = ({
     const timer = setTimeout(() => {
       setParticles([]);
       setConfetti([]);
-      onComplete();
+      onCompleteRef.current();
     }, 1500);
 
     return () => {
       cancelAnimationFrame(animationId);
       clearTimeout(timer);
     };
-  }, [isVisible, onComplete]);
+  }, [isVisible]);
 
   if (!isVisible) return null;
 

@@ -94,6 +94,23 @@ export function selectSameColor(
   return selection;
 }
 
+/**
+ * Clamp a requested move so the selection bounds stay fully inside the grid.
+ * Nudge semantics: pushing against an edge stops at the edge instead of cropping cells.
+ */
+export function clampSelectionDelta(
+  selection: SelectionMask,
+  rowDelta: number,
+  colDelta: number,
+): { rowDelta: number; colDelta: number } {
+  const bounds = selection.bounds;
+  if (!bounds) return { rowDelta: 0, colDelta: 0 };
+  return {
+    rowDelta: Math.min(selection.height - 1 - bounds.endRow, Math.max(-bounds.startRow, rowDelta)),
+    colDelta: Math.min(selection.width - 1 - bounds.endCol, Math.max(-bounds.startCol, colDelta)),
+  };
+}
+
 export function translateSelection(selection: SelectionMask, rowDelta: number, colDelta: number): SelectionMask {
   const mask = new Uint8Array(selection.mask.length);
   for (let row = 0; row < selection.height; row++) {

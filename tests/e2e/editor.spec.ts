@@ -27,7 +27,7 @@ test("sample opens the keyboard-accessible editor and updates preview text", asy
   await expect(page.getByRole("button", { name: "上一步", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "生成参数", exact: true }).click();
   await expect(page.getByRole("heading", { name: "调整生成参数", exact: true })).toBeVisible();
-  await expect(page.getByLabel("横轴切割数量 (10-300，默认 80)", { exact: true })).toHaveValue("48");
+  await expect(page.getByLabel("横轴切割数量 (10-300，默认 100)", { exact: true })).toHaveValue("48");
   await expect(page.getByRole("button", { name: "应用并重新生成", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "预览", exact: true }).click();

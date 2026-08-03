@@ -22,6 +22,8 @@ export interface FocusProgressRecord {
   revision: number;
   completedCells: number[];
   updatedAt: number;
+  /** 内容哈希（FNV-1a）；旧记录没有该字段，恢复时回退到 revision 校验 */
+  contentHash?: string;
 }
 
 interface PerlerDatabase extends DBSchema {
@@ -145,8 +147,27 @@ export async function loadFocusProgress(projectId: string) {
   return database.get("focusProgress", projectId);
 }
 
+/** 项目内容的确定性哈希（FNV-1a，覆盖宽高与 cells），用于专心模式进度与内容匹配 */
+export function hashEditorContent(document: Pick<EditorDocumentV1, "cells" | "width" | "height">): string {
+  let hash = 0x811c9dc5;
+  const mix = (value: number) => {
+    hash = Math.imul(hash ^ (value & 0xff), 0x01000193);
+    hash = Math.imul(hash ^ ((value >>> 8) & 0xff), 0x01000193);
+  };
+  mix(document.width);
+  mix(document.height);
+  for (const cell of document.cells) mix(cell);
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 async function pruneProjects(limit: number) {
   const projects = await listProjects();
   if (projects.length <= limit) return;
-  await Promise.all(projects.slice(limit).map((project) => deleteProject(project.id)));
+  // 有专心模式进度的项目不清理，避免删除正在专心模式中打开的项目
+  const database = await getDatabase();
+  const protectedIds = new Set(await database.getAllKeys("focusProgress"));
+  const deletable = projects.filter((project) => !protectedIds.has(project.id));
+  const excess = projects.length - limit;
+  // projects 按更新时间倒序，取尾部（最旧）的项目删除
+  await Promise.all(deletable.slice(-excess).map((project) => deleteProject(project.id)));
 }

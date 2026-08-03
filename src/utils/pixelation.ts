@@ -10,10 +10,10 @@ export enum PixelationMode {
 export type ColorSystem = 'MARD' | 'COCO' | '漫漫' | '盼盼' | '咪小窝';
 
 /** 默认横轴切割数量：中大型底稿的常用甜点区 */
-export const DEFAULT_GRANULARITY = 80;
+export const DEFAULT_GRANULARITY = 100;
 
-/** 默认相似色合并阈值（Oklab×100）。略高于旧值 30，优先减少碎色 */
-export const DEFAULT_SIMILARITY_THRESHOLD = 32;
+/** 默认相似色合并阈值（Oklab×100）。略低于旧值 32，保留更多色阶细节 */
+export const DEFAULT_SIMILARITY_THRESHOLD = 12;
 
 /** 稀有色占比低于此值时并入邻近高频色（约 0.4%） */
 export const RARE_COLOR_MIN_RATIO = 0.004;

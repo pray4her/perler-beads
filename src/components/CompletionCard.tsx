@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { MappedPixel } from '../utils/pixelation';
 
 interface CompletionCardProps {
@@ -20,28 +20,33 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
   const [isCapturing, setIsCapturing] = useState(false);
   const [cameraError, setCameraError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cardCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  // 计算总豆子数（排除透明区域）
+  // 计算总豆子数（与专心模式页一致：排除外部/透明格子）
   const totalBeads = React.useMemo(() => {
     if (!mappedPixelData) return 0;
-    
+
     let count = 0;
     for (let row = 0; row < gridDimensions.M; row++) {
       for (let col = 0; col < gridDimensions.N; col++) {
         const pixel = mappedPixelData[row][col];
-        // 排除透明色和空白区域
-        if (pixel.color && 
-            pixel.color !== 'transparent' && 
-            pixel.color !== 'rgba(0,0,0,0)' &&
-            !pixel.color.includes('rgba(0, 0, 0, 0)')) {
+        if (pixel && !pixel.isExternal) {
           count++;
         }
       }
     }
     return count;
   }, [mappedPixelData, gridDimensions]);
+
+  // 卸载时停止相机流，避免关闭打卡图后摄像头仍被占用（stop 幂等，拍照/取消路径已停止时无副作用）
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
 
   // 格式化时间
   const formatTime = (seconds: number): string => {
@@ -113,6 +118,7 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
+      streamRef.current = stream;
     } catch (error) {
       console.error('无法访问相机:', error);
       setIsCapturing(false);
@@ -139,6 +145,7 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
     // 停止相机
     const stream = video.srcObject as MediaStream;
     stream?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
     setIsCapturing(false);
   };
 
@@ -461,6 +468,7 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
                     onClick={() => {
                       const stream = videoRef.current?.srcObject as MediaStream;
                       stream?.getTracks().forEach(track => track.stop());
+                      streamRef.current = null;
                       setIsCapturing(false);
                     }}
                     className="border border-border bg-background text-foreground px-4 py-3 rounded-lg hover:bg-muted transition-colors"

@@ -39,6 +39,8 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [lastPanPoint, setLastPanPoint] = useState<{ x: number; y: number } | null>(null);
   const [lastPinchDistance, setLastPinchDistance] = useState<number | null>(null);
+  // 鼠标拖拽累计位移（屏幕像素），超过阈值则抑制随后的 click，避免拖拽误触发区域标记
+  const dragDistanceRef = useRef(0);
 
   // 计算格子大小
   const cellSize = Math.max(15, Math.min(40, 300 / Math.max(gridDimensions.N, gridDimensions.M)));
@@ -202,7 +204,13 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
   // 处理点击
   const handleClick = useCallback((event: React.MouseEvent | React.TouchEvent) => {
     event.preventDefault();
-    
+
+    // 拖拽（平移）结束后浏览器仍会派发 click，超过阈值则忽略
+    if (dragDistanceRef.current > 5) {
+      dragDistanceRef.current = 0;
+      return;
+    }
+
     const pos = getEventPosition(event);
     if (!pos) return;
 
@@ -231,6 +239,8 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
         y: event.touches[0].clientY
       });
       setLastPinchDistance(null);
+      // 触摸点按依赖合成 click，重置拖拽位移计数
+      dragDistanceRef.current = 0;
     } else if (event.touches.length === 2) {
       // 双指缩放开始
       event.preventDefault();
@@ -244,9 +254,9 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
     event.preventDefault();
     
     if (event.touches.length === 1 && isDragging && lastPanPoint) {
-      // 单指拖拽
-      const deltaX = event.touches[0].clientX - lastPanPoint.x;
-      const deltaY = event.touches[0].clientY - lastPanPoint.y;
+      // 单指拖拽；偏移量处于缩放坐标系内，除以 scale 使平移与手指 1:1
+      const deltaX = (event.touches[0].clientX - lastPanPoint.x) / canvasScale;
+      const deltaY = (event.touches[0].clientY - lastPanPoint.y) / canvasScale;
       
       onOffsetChange({
         x: canvasOffset.x + deltaX,
@@ -276,11 +286,7 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
       setIsDragging(false);
       setLastPanPoint(null);
       setLastPinchDistance(null);
-      
-      // 如果没有移动太多，视为点击
-      if (!isDragging) {
-        handleClick(event);
-      }
+      // 点按标记依赖浏览器合成的 click 事件（handleClick）
     } else if (event.touches.length === 1) {
       // 从双指缩放切换到单指拖拽
       setLastPinchDistance(null);
@@ -290,11 +296,12 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
         y: event.touches[0].clientY
       });
     }
-  }, [isDragging, handleClick]);
+  }, []);
 
   // 鼠标拖拽处理
   const handleMouseDown = useCallback((event: React.MouseEvent) => {
     setIsDragging(true);
+    dragDistanceRef.current = 0;
     setLastPanPoint({
       x: event.clientX,
       y: event.clientY
@@ -303,20 +310,22 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
 
   const handleMouseMove = useCallback((event: React.MouseEvent) => {
     if (isDragging && lastPanPoint) {
-      const deltaX = event.clientX - lastPanPoint.x;
-      const deltaY = event.clientY - lastPanPoint.y;
-      
+      const screenDeltaX = event.clientX - lastPanPoint.x;
+      const screenDeltaY = event.clientY - lastPanPoint.y;
+      dragDistanceRef.current += Math.abs(screenDeltaX) + Math.abs(screenDeltaY);
+
+      // 偏移量处于缩放坐标系内，除以 scale 使平移与指针 1:1
       onOffsetChange({
-        x: canvasOffset.x + deltaX,
-        y: canvasOffset.y + deltaY
+        x: canvasOffset.x + screenDeltaX / canvasScale,
+        y: canvasOffset.y + screenDeltaY / canvasScale
       });
-      
+
       setLastPanPoint({
         x: event.clientX,
         y: event.clientY
       });
     }
-  }, [isDragging, lastPanPoint, canvasOffset, onOffsetChange]);
+  }, [isDragging, lastPanPoint, canvasOffset, canvasScale, onOffsetChange]);
 
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);

@@ -1,26 +1,50 @@
 import { cloneEditorDocument } from "@/editor/document";
 import type {
+  CellPatch,
   EditorCommand,
   EditorCommitResult,
   EditorDocumentV1,
   EditorHistoryEntry,
   EditorSnapshot,
+  SelectionMask,
 } from "@/editor/types";
 
 const MAX_HISTORY_COMMANDS = 100;
 const MAX_HISTORY_BYTES = 64 * 1024 * 1024;
+/** Consecutive commands with the same coalesceKey inside this window merge into one entry. */
+const COALESCE_WINDOW_MS = 1000;
 
 interface StoredCommand {
   command: EditorCommand;
   entry: EditorHistoryEntry;
 }
 
-function commandBytes(command: EditorCommand): number {
-  if (command.patches) return command.patches.length * 12 + 128;
-  if (command.beforeDocument && command.afterDocument) {
-    return command.beforeDocument.cells.byteLength + command.afterDocument.cells.byteLength + 1024;
+function cloneSelectionMask(selection: SelectionMask | null): SelectionMask | null {
+  if (!selection) return null;
+  return { ...selection, mask: selection.mask.slice(), bounds: selection.bounds ? { ...selection.bounds } : null };
+}
+
+/** Merge an incoming patch set onto a stored one, keeping the earliest `before` per cell. */
+function mergePatches(base: CellPatch[], incoming: CellPatch[]): CellPatch[] {
+  const merged = new Map<number, CellPatch>();
+  for (const patch of base) merged.set(patch.index, { ...patch });
+  for (const patch of incoming) {
+    const existing = merged.get(patch.index);
+    if (existing) existing.after = patch.after;
+    else merged.set(patch.index, { index: patch.index, before: patch.before, after: patch.after });
   }
-  return 128;
+  return Array.from(merged.values()).filter((patch) => patch.before !== patch.after);
+}
+
+function commandBytes(command: EditorCommand): number {
+  let bytes = 128;
+  if (command.patches) bytes += command.patches.length * 12;
+  if (command.beforeDocument && command.afterDocument) {
+    bytes += command.beforeDocument.cells.byteLength + command.afterDocument.cells.byteLength + 1024;
+  }
+  if (command.selectionBefore) bytes += command.selectionBefore.mask.byteLength + 64;
+  if (command.selectionAfter) bytes += command.selectionAfter.mask.byteLength + 64;
+  return bytes;
 }
 
 function commandId() {
@@ -61,15 +85,48 @@ export class EditorStore {
   }
 
   execute(command: EditorCommand): boolean {
-    const clearedFuture = this.historyIndex < this.history.length;
-    if (clearedFuture) this.history = this.history.slice(0, this.historyIndex);
     const normalized: EditorCommand = {
       ...command,
       id: command.id ?? commandId(),
       timestamp: command.timestamp ?? Date.now(),
       patches: command.patches?.filter((patch) => patch.before !== patch.after),
+      selectionBefore: command.selectionBefore === undefined ? undefined : cloneSelectionMask(command.selectionBefore),
+      selectionAfter: command.selectionAfter === undefined ? undefined : cloneSelectionMask(command.selectionAfter),
     };
+    // Determine no-ops before touching history so they never discard the redo future.
     if ((!normalized.patches || normalized.patches.length === 0) && !normalized.afterDocument) return false;
+    const clearedFuture = this.historyIndex < this.history.length;
+    if (clearedFuture) this.history = this.history.slice(0, this.historyIndex);
+
+    // Coalesce rapid same-key commands (e.g. held arrow-key nudges) into the top entry:
+    // keep the earliest before/selectionBefore, replace the after, push nothing new.
+    if (normalized.coalesceKey && normalized.patches && this.historyIndex > 0) {
+      const top = this.history[this.historyIndex - 1];
+      if (top.command.coalesceKey === normalized.coalesceKey && top.command.patches && normalized.timestamp! - top.command.timestamp! <= COALESCE_WINDOW_MS) {
+        this.apply(normalized, "forward");
+        const mergedPatches = mergePatches(top.command.patches, normalized.patches);
+        top.command = {
+          ...top.command,
+          timestamp: normalized.timestamp,
+          patches: mergedPatches,
+          selectionAfter: normalized.selectionAfter === undefined ? top.command.selectionAfter : normalized.selectionAfter,
+        };
+        top.entry = {
+          ...top.entry,
+          timestamp: normalized.timestamp!,
+          affectedCells: mergedPatches.length,
+          bytes: commandBytes(top.command),
+        };
+        this.emit();
+        this.onCommit?.({
+          document: cloneEditorDocument(this.document),
+          command: top.entry,
+          clearedFuture,
+          selection: top.command.selectionAfter === undefined ? undefined : cloneSelectionMask(top.command.selectionAfter),
+        });
+        return true;
+      }
+    }
 
     this.apply(normalized, "forward");
     const entry: EditorHistoryEntry = {
@@ -83,7 +140,12 @@ export class EditorStore {
     this.historyIndex = this.history.length;
     this.trimHistory();
     this.emit();
-    this.onCommit?.({ document: cloneEditorDocument(this.document), command: entry, clearedFuture });
+    this.onCommit?.({
+      document: cloneEditorDocument(this.document),
+      command: entry,
+      clearedFuture,
+      selection: normalized.selectionAfter === undefined ? undefined : cloneSelectionMask(normalized.selectionAfter),
+    });
     return true;
   }
 
@@ -93,7 +155,12 @@ export class EditorStore {
     this.apply(stored.command, "backward");
     this.historyIndex -= 1;
     this.emit();
-    this.onCommit?.({ document: cloneEditorDocument(this.document), command: stored.entry, clearedFuture: false });
+    this.onCommit?.({
+      document: cloneEditorDocument(this.document),
+      command: stored.entry,
+      clearedFuture: false,
+      selection: stored.command.selectionBefore === undefined ? undefined : cloneSelectionMask(stored.command.selectionBefore),
+    });
     return true;
   }
 
@@ -103,7 +170,12 @@ export class EditorStore {
     this.apply(stored.command, "forward");
     this.historyIndex += 1;
     this.emit();
-    this.onCommit?.({ document: cloneEditorDocument(this.document), command: stored.entry, clearedFuture: false });
+    this.onCommit?.({
+      document: cloneEditorDocument(this.document),
+      command: stored.entry,
+      clearedFuture: false,
+      selection: stored.command.selectionAfter === undefined ? undefined : cloneSelectionMask(stored.command.selectionAfter),
+    });
     return true;
   }
 
@@ -117,13 +189,17 @@ export class EditorStore {
 
   private apply(command: EditorCommand, direction: "forward" | "backward") {
     if (command.beforeDocument && command.afterDocument) {
-      this.document = cloneEditorDocument(direction === "forward" ? command.afterDocument : command.beforeDocument);
+      const snapshot = direction === "forward" ? command.afterDocument : command.beforeDocument;
+      this.document = cloneEditorDocument(snapshot);
+      // Snapshots carry the revision they were captured at; trust it so undoing
+      // structural commands restores the pre-command revision instead of drifting negative.
+      this.document.revision = direction === "forward" ? snapshot.revision + 1 : snapshot.revision;
     } else if (command.patches) {
       const cells = this.document.cells.slice();
       for (const patch of command.patches) cells[patch.index] = direction === "forward" ? patch.after : patch.before;
       this.document = { ...this.document, cells };
+      this.document.revision += direction === "forward" ? 1 : -1;
     }
-    this.document.revision += direction === "forward" ? 1 : -1;
     this.document.updatedAt = Date.now();
   }
 

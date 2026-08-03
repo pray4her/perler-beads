@@ -1,4 +1,5 @@
 import type { CellPatch, EditorDocumentV1, SelectionMask } from "@/editor/types";
+import { boundsFromMask } from "@/editor/selection";
 
 export interface CellPoint {
   row: number;
@@ -214,20 +215,23 @@ export function transformSelectionDocument(
   document: EditorDocumentV1,
   selection: SelectionMask,
   transform: "flip-horizontal" | "flip-vertical" | "rotate-90" | "rotate-180",
-): { patches: CellPatch[]; width: number; height: number } {
+): { patches: CellPatch[]; width: number; height: number; selection: SelectionMask } {
   const bounds = selection.bounds;
-  if (!bounds) return { patches: [], width: 0, height: 0 };
+  if (!bounds) return { patches: [], width: 0, height: 0, selection };
   const width = bounds.endCol - bounds.startCol + 1;
   const height = bounds.endRow - bounds.startRow + 1;
-  const outputWidth = transform === "rotate-90" ? height : width;
-  const outputHeight = transform === "rotate-90" ? width : height;
+  const rotated = transform === "rotate-90";
+  const outputWidth = rotated ? height : width;
+  const outputHeight = rotated ? width : height;
+  // Rotate-90 swaps the footprint to height×width; shift the origin so the whole
+  // rotated region stays inside the document instead of dropping cells.
+  const originRow = rotated ? Math.max(0, Math.min(bounds.startRow, document.height - outputHeight)) : bounds.startRow;
+  const originCol = rotated ? Math.max(0, Math.min(bounds.startCol, document.width - outputWidth)) : bounds.startCol;
   const final = document.cells.slice();
-  for (let row = bounds.startRow; row <= bounds.endRow; row++) {
-    for (let col = bounds.startCol; col <= bounds.endCol; col++) {
-      const index = row * document.width + col;
-      if (selection.mask[index]) final[index] = 0;
-    }
+  for (let index = 0; index < selection.mask.length; index++) {
+    if (selection.mask[index]) final[index] = 0;
   }
+  const rotatedMask = rotated ? new Uint8Array(document.cells.length) : null;
   for (let row = 0; row < height; row++) {
     for (let col = 0; col < width; col++) {
       const sourceIndex = (bounds.startRow + row) * document.width + bounds.startCol + col;
@@ -244,16 +248,24 @@ export function transformSelectionDocument(
         targetRow = height - 1 - row;
         targetCol = width - 1 - col;
       }
-      const absoluteRow = bounds.startRow + targetRow;
-      const absoluteCol = bounds.startCol + targetCol;
-      if (absoluteRow < document.height && absoluteCol < document.width) {
-        final[absoluteRow * document.width + absoluteCol] = document.cells[sourceIndex];
-      }
+      const absoluteRow = originRow + targetRow;
+      const absoluteCol = originCol + targetCol;
+      if (absoluteRow < 0 || absoluteRow >= document.height || absoluteCol < 0 || absoluteCol >= document.width) continue;
+      const targetIndex = absoluteRow * document.width + absoluteCol;
+      // Flips keep the original footprint: never overwrite cells outside the mask.
+      if (!rotated && !selection.mask[targetIndex]) continue;
+      if (rotatedMask) rotatedMask[targetIndex] = 1;
+      final[targetIndex] = document.cells[sourceIndex];
     }
   }
   const patches: CellPatch[] = [];
   for (let index = 0; index < final.length; index++) {
     if (final[index] !== document.cells[index]) patches.push({ index, before: document.cells[index], after: final[index] });
   }
-  return { patches, width: outputWidth, height: outputHeight };
+  let nextSelection = selection;
+  if (rotatedMask) {
+    nextSelection = { width: document.width, height: document.height, mask: rotatedMask, bounds: null };
+    nextSelection.bounds = boundsFromMask(nextSelection);
+  }
+  return { patches, width: outputWidth, height: outputHeight, selection: nextSelection };
 }

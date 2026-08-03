@@ -109,6 +109,11 @@ export interface EditorCommand {
   patches?: CellPatch[];
   beforeDocument?: EditorDocumentV1;
   afterDocument?: EditorDocumentV1;
+  /** Selection state around this command so undo/redo can restore it. Absent = command does not touch the selection. */
+  selectionBefore?: SelectionMask | null;
+  selectionAfter?: SelectionMask | null;
+  /** Commands sharing a key within a short window merge into one history entry (e.g. repeated nudges). */
+  coalesceKey?: string;
 }
 
 export interface EditorHistoryEntry {
@@ -132,6 +137,8 @@ export interface EditorCommitResult {
   document: EditorDocumentV1;
   command: EditorHistoryEntry;
   clearedFuture: boolean;
+  /** Selection to restore after this commit; undefined = leave the current selection alone. */
+  selection?: SelectionMask | null;
 }
 
 export interface SelectionBounds {

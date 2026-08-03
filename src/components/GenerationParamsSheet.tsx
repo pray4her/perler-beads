@@ -10,7 +10,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
+import FieldHelp from "@/components/FieldHelp";
 import { PixelationMode } from "@/utils/pixelation";
 import { colorSystemOptions, getColorKeyByHex, type ColorSystem } from "@/utils/colorSystemUtils";
 
@@ -80,7 +80,9 @@ export default function GenerationParamsSheet({
 
         <div className="flex-1 space-y-5 overflow-y-auto p-4">
           <div className="space-y-2">
-            <Label htmlFor="sheet-granularity">横轴切割数量 (10-300，默认 80)</Label>
+            <FieldHelp label="横轴切割数量" htmlFor="sheet-granularity">
+              把图片横向平均切成 N 列，每格对应一颗拼豆；纵向行数按原图比例自动计算。调大：轮廓和细节更清楚，但成品更大、豆量更多，还可能出现孤立碎色；调小：更好拼，但容易认不出原图。想控制成品尺寸，配合「制作」面板里的物理尺寸估算一起看。
+            </FieldHelp>
             <input
               id="sheet-granularity"
               type="number"
@@ -90,11 +92,13 @@ export default function GenerationParamsSheet({
               onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftGranularity(event.target.value)}
               className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
-            <p className="text-xs text-muted-foreground">中大型底稿建议 60–100；过细易产生碎色。</p>
+            <p className="text-xs text-muted-foreground">范围 10–300，默认 100。数值 = 成品宽度颗数：人物、宠物建议 60–100，越大越精细但豆子越多。</p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="sheet-similarity">颜色合并阈值 (0-100，默认 32)</Label>
+            <FieldHelp label="颜色合并阈值" htmlFor="sheet-similarity">
+              判断两种颜色「算不算同一种」的宽容度。调高：更多相近色被并成一个色号，买豆种类少、画面更干净，但阴影和渐变细节可能丢失；调低：保留更多色彩层次，代价是色号变多。描边和明暗对比会被自动保护，不易被误合并。觉得颜色断层明显就调低，觉得杂色太多就调高。
+            </FieldHelp>
             <input
               id="sheet-similarity"
               type="number"
@@ -104,11 +108,13 @@ export default function GenerationParamsSheet({
               onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftSimilarity(event.target.value)}
               className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
-            <p className="text-xs text-muted-foreground">越高越干净；描边与阴影对比会自动保护，不易被误合并。</p>
+            <p className="text-xs text-muted-foreground">范围 0–100，默认 12。越高用色越少、图纸越干净；越低越保留原图色彩层次。</p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="sheet-pixelation-mode">处理模式</Label>
+            <FieldHelp label="处理模式" htmlFor="sheet-pixelation-mode">
+              卡通（主色）：每格取出现次数最多的颜色，色块干净、边缘清晰，适合卡通图、Logo 和扁平插画。真实（平均）：每格取所有像素的平均色，过渡更柔和，适合照片和渐变较多的图。
+            </FieldHelp>
             <select
               id="sheet-pixelation-mode"
               value={draftMode}
@@ -121,7 +127,9 @@ export default function GenerationParamsSheet({
           </div>
 
           <div className="space-y-2">
-            <Label>色号体系</Label>
+            <FieldHelp label="色号体系">
+              选择你手上拼豆品牌对应的色号表。生成的图纸、格内色号和用量统计都会使用该品牌的编号，方便对照买豆、查库存；不同品牌之间色号不通用，换体系后需重新生成。
+            </FieldHelp>
             <div className="flex flex-wrap gap-2">
               {colorSystemOptions.map((option) => (
                 <Button

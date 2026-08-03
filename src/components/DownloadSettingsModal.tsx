@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { GridDownloadOptions } from '../types/downloadTypes';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import FieldHelp from '@/components/FieldHelp';
 import { Slider } from '@/components/ui/slider';
 import {
   Dialog,
@@ -115,7 +116,9 @@ const DownloadSettingsModal: React.FC<DownloadSettingsModalProps> = ({
           {tempOptions.showGrid && (
             <div className="space-y-4 border-l border-border pl-3 ml-1">
               <div className="space-y-2">
-                <Label>网格线间隔 (每 N 格)</Label>
+                <FieldHelp label="网格线间隔">
+                  每隔 N 格画一条加粗网格线，把图纸分成若干小区块。打印出来拼豆时按区块数格子更不容易错位，常用 5 或 10。
+                </FieldHelp>
                 <div className="flex items-center gap-3">
                   <Slider
                     value={tempOptions.gridInterval}

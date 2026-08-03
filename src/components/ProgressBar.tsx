@@ -4,12 +4,6 @@ import { Progress } from '@/components/ui/progress';
 interface ProgressBarProps {
   progressPercentage: number;
   recommendedCell?: { row: number; col: number } | null;
-  colorInfo?: {
-    color: string;
-    name: string;
-    total: number;
-    completed: number;
-  };
 }
 
 const ProgressBar: React.FC<ProgressBarProps> = ({

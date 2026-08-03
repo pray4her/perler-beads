@@ -25,7 +25,6 @@ import DownloadSettingsModal, { gridLineColorOptions } from '../components/Downl
 import { downloadImage, importCsvData } from '../utils/imageDownloader';
 
 import { 
-  convertPaletteToColorSystem, 
   getColorKeyByHex,
   getMardToHexMapping,
   sortColorsByHue,
@@ -58,6 +57,7 @@ import { TRANSPARENT_KEY, transparentColorData } from '../utils/pixelEditingUtil
 import { recalculateColorStats } from '../utils/pixelEditingUtils';
 import PixelEditorWorkspace from '../components/PixelEditorWorkspace';
 import { createEditorDocument, editorDocumentToGrid } from '@/editor/document';
+import { listProjects, loadProject } from '@/editor/projectStorage';
 import type { EditorCommitResult } from '@/editor/types';
 
 export default function Home() {
@@ -79,12 +79,8 @@ export default function Home() {
   // 新增：色号系统选择状态
   const [selectedColorSystem, setSelectedColorSystem] = useState<ColorSystem>('MARD');
   
-  const [activeBeadPalette, setActiveBeadPalette] = useState<PaletteColor[]>(() => {
-      return fullBeadPalette; // 默认使用全部颜色
-  });
   // 状态变量：存储被排除的颜色（hex值）
   const [excludedColorKeys, setExcludedColorKeys] = useState<Set<string>>(new Set());
-  const [showExcludedColors, setShowExcludedColors] = useState<boolean>(false);
   // 用于记录初始网格颜色（hex值），用于显示排除功能
   const [initialGridColorKeys, setInitialGridColorKeys] = useState<Set<string>>(new Set());
   const [mappedPixelData, setMappedPixelData] = useState<MappedPixel[][] | null>(null);
@@ -94,12 +90,12 @@ export default function Home() {
   const [tooltipData, setTooltipData] = useState<{ x: number, y: number, key: string, color: string } | null>(null);
   const [remapTrigger, setRemapTrigger] = useState<number>(0);
   const [isManualColoringMode, setIsManualColoringMode] = useState<boolean>(false);
-  const [selectedColor, setSelectedColor] = useState<MappedPixel | null>(null);
+  const [, setSelectedColor] = useState<MappedPixel | null>(null);
   // 新增：一键擦除模式状态
-  const [isEraseMode, setIsEraseMode] = useState<boolean>(false);
+  const [, setIsEraseMode] = useState<boolean>(false);
   const [customPaletteSelections, setCustomPaletteSelections] = useState<PaletteSelections>({});
   const [isCustomPaletteEditorOpen, setIsCustomPaletteEditorOpen] = useState<boolean>(false);
-  const [isCustomPalette, setIsCustomPalette] = useState<boolean>(false);
+  const [, setIsCustomPalette] = useState<boolean>(false);
   
   // ++ 新增：下载设置相关状态 ++
   const [isDownloadSettingsOpen, setIsDownloadSettingsOpen] = useState<boolean>(false);
@@ -113,39 +109,8 @@ export default function Home() {
     exportCsv: false // 默认不导出CSV
   });
 
-  // 新增：高亮相关状态
-  const [highlightColorKey, setHighlightColorKey] = useState<string | null>(null);
-
-  // 新增：完整色板切换状态
-  const [showFullPalette, setShowFullPalette] = useState<boolean>(false);
-  
-  // 新增：颜色替换相关状态
-  const [colorReplaceState, setColorReplaceState] = useState<{
-    isActive: boolean;
-    step: 'select-source' | 'select-target';
-    sourceColor?: { key: string; color: string };
-  }>({
-    isActive: false,
-    step: 'select-source'
-  });
-
   // 新增：组件挂载状态
   const [isMounted, setIsMounted] = useState<boolean>(false);
-
-  // 新增：悬浮调色盘状态
-  const [isFloatingPaletteOpen, setIsFloatingPaletteOpen] = useState<boolean>(true);
-
-  // 新增：放大镜状态
-  const [isMagnifierActive, setIsMagnifierActive] = useState<boolean>(false);
-  const [magnifierSelectionArea, setMagnifierSelectionArea] = useState<{
-    startRow: number;
-    startCol: number;
-    endRow: number;
-    endCol: number;
-  } | null>(null);
-
-  // 新增：活跃工具层级管理
-  const [activeFloatingTool, setActiveFloatingTool] = useState<'palette' | 'magnifier' | null>(null);
 
   // 新增：编辑撤回历史栈（多步）
   interface EditSnapshot {
@@ -153,61 +118,36 @@ export default function Home() {
     colorCounts: { [key: string]: { count: number; color: string } };
     totalBeadCount: number;
   }
-  const [editHistory, setEditHistory] = useState<EditSnapshot[]>([]);
+  const [, setEditHistory] = useState<EditSnapshot[]>([]);
 
   // 新增：一键去背景撤回快照（单步）
   const [bgRemovalSnapshot, setBgRemovalSnapshot] = useState<EditSnapshot | null>(null);
 
   // 新增：轻量提示
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = useCallback((msg: string) => {
+    // 清除上一次未完成的定时器，避免新提示被旧定时器提前关掉
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 2000);
+    toastTimerRef.current = setTimeout(() => {
+      toastTimerRef.current = null;
+      setToastMessage(null);
+    }, 2000);
   }, []);
 
-  // 放大镜切换处理函数
-  const handleToggleMagnifier = () => {
-    const newActiveState = !isMagnifierActive;
-    setIsMagnifierActive(newActiveState);
-    
-    // 如果关闭放大镜，清除选择区域，重新开始
-    if (!newActiveState) {
-      setMagnifierSelectionArea(null);
-    }
-  };
-
-  // 激活工具处理函数
-  const handleActivatePalette = () => {
-    setActiveFloatingTool('palette');
-  };
-
-  const handleActivateMagnifier = () => {
-    setActiveFloatingTool('magnifier');
-  };
+  // 卸载时清理 toast 定时器
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
 
   // --- 撤回功能 ---
-
-  // 保存编辑快照到历史栈
-  const saveEditSnapshot = useCallback(() => {
-    if (!mappedPixelData || !colorCounts) return;
-    const snapshot: EditSnapshot = {
-      mappedPixelData: mappedPixelData.map(row => row.map(cell => ({ ...cell }))),
-      colorCounts: { ...colorCounts },
-      totalBeadCount,
-    };
-    setEditHistory(prev => [...prev.slice(-49), snapshot]);
-  }, [mappedPixelData, colorCounts, totalBeadCount]);
-
-  // 编辑模式多步撤回
-  const handleUndoEdit = useCallback(() => {
-    if (editHistory.length === 0) return;
-    const snapshot = editHistory[editHistory.length - 1];
-    setMappedPixelData(snapshot.mappedPixelData);
-    setColorCounts(snapshot.colorCounts);
-    setTotalBeadCount(snapshot.totalBeadCount);
-    setEditHistory(prev => prev.slice(0, -1));
-    showToast('已撤回上一步');
-  }, [editHistory, showToast]);
 
   // 一键去背景单步撤回
   const handleUndoBgRemoval = useCallback(() => {
@@ -216,66 +156,17 @@ export default function Home() {
     setColorCounts(bgRemovalSnapshot.colorCounts);
     setTotalBeadCount(bgRemovalSnapshot.totalBeadCount);
     setBgRemovalSnapshot(null);
+    // 与去背景一致：重建编辑器文档，避免工作台旧文档覆盖撤回结果
+    if (isManualColoringMode) {
+      setEditorMountId((value) => value + 1);
+    }
     showToast('已撤回背景去除');
-  }, [bgRemovalSnapshot, showToast]);
+  }, [bgRemovalSnapshot, isManualColoringMode, showToast]);
 
   // 清空编辑历史（参数变化、退出编辑模式等时调用）
   const clearEditHistory = useCallback(() => {
     setEditHistory([]);
   }, []);
-
-  // 放大镜像素编辑处理函数
-  const handleMagnifierPixelEdit = (row: number, col: number, colorData: { key: string; color: string }) => {
-    if (!mappedPixelData) return;
-
-    const oldPixel = mappedPixelData[row][col];
-    if (!oldPixel || oldPixel.key === colorData.key) return;
-
-    // 创建新的像素数据
-    const newMappedPixelData = mappedPixelData.map((rowData, r) =>
-      rowData.map((pixel, c) => {
-        if (r === row && c === col) {
-          return {
-            key: colorData.key,
-            color: colorData.color
-          } as MappedPixel;
-        }
-        return pixel;
-      })
-    );
-
-    saveEditSnapshot();
-    setMappedPixelData(newMappedPixelData);
-
-    // 更新颜色统计
-    if (colorCounts) {
-      const newColorCounts = { ...colorCounts };
-
-      // 减少原颜色的计数
-      if (newColorCounts[oldPixel.key]) {
-        newColorCounts[oldPixel.key].count--;
-        if (newColorCounts[oldPixel.key].count === 0) {
-          delete newColorCounts[oldPixel.key];
-        }
-      }
-
-      // 增加新颜色的计数
-      if (newColorCounts[colorData.key]) {
-        newColorCounts[colorData.key].count++;
-      } else {
-        newColorCounts[colorData.key] = {
-          count: 1,
-          color: colorData.color
-        };
-      }
-
-      setColorCounts(newColorCounts);
-
-      // 更新总计数
-      const newTotal = Object.values(newColorCounts).reduce((sum, item) => sum + item.count, 0);
-      setTotalBeadCount(newTotal);
-    }
-  };
 
   const originalCanvasRef = useRef<HTMLCanvasElement>(null);
   const pixelatedCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -290,20 +181,22 @@ export default function Home() {
   // ++ Add a ref for the main element ++
   const mainRef = useRef<HTMLElement>(null);
 
+  // 像素化请求序号：每次调用 pixelateImage 自增，过期的 img.onload/onerror 结果直接忽略，
+  // 防止 50ms 防抖期间发出的旧请求（解码更慢）覆盖新请求的结果
+  const pixelateRequestRef = useRef(0);
+
   // --- Derived State ---
 
-  // Update active palette based on selection and exclusions
-  useEffect(() => {
-    const newActiveBeadPalette = fullBeadPalette.filter(color => {
+  // activeBeadPalette 规则（唯一来源）：仅按自定义色板选择和排除列表过滤 fullBeadPalette，
+  // key 保持为 hex 值，不做色号系统转换 —— 像素化匹配只依赖 rgb/hex，
+  // 而展示用的色号由各消费处（currentGridColors / fullPaletteColors / downloadImage 等）
+  // 通过 getColorKeyByHex(hex, selectedColorSystem) 按需转换。
+  const activeBeadPalette = useMemo(() => {
+    return fullBeadPalette.filter(color => {
       const normalizedHex = color.hex.toUpperCase();
-      const isSelectedInCustomPalette = customPaletteSelections[normalizedHex];
-      const isNotExcluded = !excludedColorKeys.has(normalizedHex);
-      return isSelectedInCustomPalette && isNotExcluded;
+      return Boolean(customPaletteSelections[normalizedHex]) && !excludedColorKeys.has(normalizedHex);
     });
-    // 根据选择的色号系统转换调色板
-    const convertedPalette = convertPaletteToColorSystem(newActiveBeadPalette, selectedColorSystem);
-    setActiveBeadPalette(convertedPalette);
-  }, [customPaletteSelections, excludedColorKeys, remapTrigger, selectedColorSystem]);
+  }, [customPaletteSelections, excludedColorKeys]);
 
   // ++ 添加：当状态变化时同步更新输入框的值 ++
   useEffect(() => {
@@ -392,19 +285,6 @@ export default function Home() {
       setIsCustomPalette(false);
     }
   }, []); // 只在组件首次加载时执行
-
-  // 更新 activeBeadPalette 基于自定义选择和排除列表
-  useEffect(() => {
-    const newActiveBeadPalette = fullBeadPalette.filter(color => {
-      const normalizedHex = color.hex.toUpperCase();
-      const isSelectedInCustomPalette = customPaletteSelections[normalizedHex];
-      // 使用hex值进行排除检查
-      const isNotExcluded = !excludedColorKeys.has(normalizedHex);
-      return isSelectedInCustomPalette && isNotExcluded;
-    });
-    // 不进行色号系统转换，保持原始的MARD色号和hex值
-    setActiveBeadPalette(newActiveBeadPalette);
-  }, [customPaletteSelections, excludedColorKeys, remapTrigger]);
 
   // --- Event Handlers ---
 
@@ -545,6 +425,8 @@ export default function Home() {
     setInitialGridColorKeys(new Set());
     setGranularity(DEFAULT_GRANULARITY);
     setGranularityInput(String(DEFAULT_GRANULARITY));
+    setSimilarityThreshold(DEFAULT_SIMILARITY_THRESHOLD);
+    setSimilarityThresholdInput(String(DEFAULT_SIMILARITY_THRESHOLD));
     setPendingEnterEdit(true);
     setRemapTrigger((prev) => prev + 1);
   };
@@ -635,39 +517,6 @@ export default function Home() {
     }
   };
 
-  // 处理一键擦除模式切换
-  const handleEraseToggle = () => {
-    // 确保在手动上色模式下才能使用擦除功能
-    if (!isManualColoringMode) {
-      return;
-    }
-    
-    // 如果当前在颜色替换模式，先退出替换模式
-    if (colorReplaceState.isActive) {
-      setColorReplaceState({
-        isActive: false,
-        step: 'select-source'
-      });
-      setHighlightColorKey(null);
-    }
-    
-    setIsEraseMode(!isEraseMode);
-    // 如果开启擦除模式，取消选中的颜色
-    if (!isEraseMode) {
-      setSelectedColor(null);
-    }
-  };
-
-  // ++ 新增：处理输入框变化的函数 ++
-  const handleGranularityInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setGranularityInput(event.target.value);
-  };
-
-  // ++ 添加：处理相似度输入框变化的函数 ++
-  const handleSimilarityThresholdInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setSimilarityThresholdInput(event.target.value);
-  };
-
   // ++ 修改：处理确认按钮点击的函数，同时处理两个参数 ++
   const handleConfirmParameters = (overrides?: {
     granularityInput?: string;
@@ -738,8 +587,10 @@ export default function Home() {
     console.log("Using fallback color for empty cells:", t1FallbackColor);
 
     const img = new window.Image();
+    const requestId = ++pixelateRequestRef.current;
     
     img.onerror = (error: Event | string) => {
+      if (requestId !== pixelateRequestRef.current) return; // 过期请求，忽略
       console.error("Image loading failed:", error); 
       alert("无法加载图片。");
       setOriginalImageSrc(null); 
@@ -750,6 +601,7 @@ export default function Home() {
     };
     
     img.onload = () => {
+      if (requestId !== pixelateRequestRef.current) return; // 过期请求，忽略
       console.log("Image loaded successfully.");
       const aspectRatio = img.height / img.width;
       const N = detailLevel;
@@ -924,6 +776,49 @@ export default function Home() {
     setIsMounted(true);
   }, []);
 
+  // 从专注模式返回：/?restore=<projectId>（或 latest）时从 IndexedDB 恢复项目并直接进入编辑模式；
+  // 无参数或恢复失败时静默停留在首页。静态导出下只能通过客户端 effect 读取查询参数。
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const restoreId = params.get('restore');
+    if (!restoreId) return;
+    // 消费后立即移除参数，避免刷新/后退时重复恢复
+    window.history.replaceState(null, '', window.location.pathname);
+
+    let cancelled = false;
+    const restore = async () => {
+      try {
+        let projectDoc = restoreId === 'latest' ? undefined : await loadProject(restoreId);
+        if (!projectDoc) {
+          // id 缺失/无效或 latest：回退到最近保存的项目
+          const summaries = await listProjects();
+          if (summaries.length > 0) {
+            projectDoc = await loadProject(summaries[0].id);
+          }
+        }
+        if (!projectDoc || cancelled) return;
+
+        const grid = editorDocumentToGrid(projectDoc);
+        const stats = recalculateColorStats(grid);
+        setMappedPixelData(grid);
+        setGridDimensions({ N: projectDoc.width, M: projectDoc.height });
+        setColorCounts(stats.colorCounts);
+        setTotalBeadCount(stats.totalCount);
+        setInitialGridColorKeys(new Set(Object.keys(stats.colorCounts)));
+        setSelectedColorSystem(projectDoc.colorSystem);
+        setSelectedColor(null);
+        // 全新挂载编辑器，让 editorInitialDocument 基于恢复出的网格重建
+        setEditorMountId((value) => value + 1);
+        setIsManualColoringMode(true);
+      } catch (error) {
+        console.error('恢复项目失败:', error);
+      }
+    };
+    void restore();
+    return () => { cancelled = true; };
+  }, []);
+
     // --- Download function (ensure filename includes palette) ---
     const handleDownloadRequest = (options?: GridDownloadOptions) => {
         // 调用移动到utils/imageDownloader.ts中的downloadImage函数
@@ -942,6 +837,12 @@ export default function Home() {
     const handleToggleExcludeColor = (hexKey: string) => {
         const currentExcluded = excludedColorKeys;
         const isExcluding = !currentExcluded.has(hexKey);
+
+        // 排除会立即生效并重建编辑画布（清空工作台撤回历史），编辑模式下先确认
+        if (isExcluding && isManualColoringMode) {
+            const confirmed = window.confirm("排除颜色将立即应用并重建编辑画布，当前撤回历史会被清空，是否继续？");
+            if (!confirmed) return;
+        }
 
         if (isExcluding) {
             console.log(`---------\nAttempting to EXCLUDE color: ${hexKey}`);
@@ -1183,268 +1084,11 @@ export default function Home() {
     setColorCounts(newColorCounts);
     setTotalBeadCount(newTotalCount);
     setInitialGridColorKeys(new Set(Object.keys(newColorCounts)));
-  };
 
-  // --- Tooltip Logic ---
-
-  // --- Canvas Interaction ---
-
-  // 洪水填充擦除函数
-  const floodFillErase = (startRow: number, startCol: number, targetKey: string) => {
-    if (!mappedPixelData || !gridDimensions) return;
-
-    const { N, M } = gridDimensions;
-    const newPixelData = mappedPixelData.map(row => row.map(cell => ({ ...cell })));
-    const visited = Array(M).fill(null).map(() => Array(N).fill(false));
-    
-    // 使用栈实现非递归洪水填充
-    const stack = [{ row: startRow, col: startCol }];
-    
-    while (stack.length > 0) {
-      const { row, col } = stack.pop()!;
-      
-      // 检查边界
-      if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) {
-        continue;
-      }
-      
-      const currentCell = newPixelData[row][col];
-      
-      // 检查是否是目标颜色且不是外部区域
-      if (!currentCell || currentCell.isExternal || currentCell.key !== targetKey) {
-        continue;
-      }
-      
-      // 标记为已访问
-      visited[row][col] = true;
-      
-      // 擦除当前像素（设为透明）
-      newPixelData[row][col] = { ...transparentColorData };
-      
-      // 添加相邻像素到栈中
-      stack.push(
-        { row: row - 1, col }, // 上
-        { row: row + 1, col }, // 下
-        { row, col: col - 1 }, // 左
-        { row, col: col + 1 }  // 右
-      );
-    }
-    
-    // 更新状态
-    saveEditSnapshot();
-    setMappedPixelData(newPixelData);
-
-    // 重新计算颜色统计
-    if (colorCounts) {
-      const newColorCounts: { [hexKey: string]: { count: number; color: string } } = {};
-      let newTotalCount = 0;
-      
-      newPixelData.flat().forEach(cell => {
-        if (cell && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
-          const cellHex = cell.color.toUpperCase();
-          if (!newColorCounts[cellHex]) {
-            newColorCounts[cellHex] = {
-              count: 0,
-              color: cellHex
-            };
-          }
-          newColorCounts[cellHex].count++;
-          newTotalCount++;
-        }
-      });
-      
-      setColorCounts(newColorCounts);
-      setTotalBeadCount(newTotalCount);
-    }
-  };
-
-  // ++ Re-introduce the combined interaction handler ++
-  const handleCanvasInteraction = (
-    clientX: number, 
-    clientY: number, 
-    pageX: number, 
-    pageY: number, 
-    isClick: boolean = false,
-    isTouchEnd: boolean = false
-  ) => {
-    // 如果是触摸结束或鼠标离开事件，隐藏提示
-    if (isTouchEnd) {
-      setTooltipData(null);
-      return;
-    }
-
-    const canvas = pixelatedCanvasRef.current;
-    if (!canvas || !mappedPixelData || !gridDimensions) {
-      setTooltipData(null);
-      return;
-    }
-
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const canvasX = (clientX - rect.left) * scaleX;
-    const canvasY = (clientY - rect.top) * scaleY;
-
-    const { N, M } = gridDimensions;
-    const cellWidthOutput = canvas.width / N;
-    const cellHeightOutput = canvas.height / M;
-
-    const i = Math.floor(canvasX / cellWidthOutput);
-    const j = Math.floor(canvasY / cellHeightOutput);
-
-    if (i >= 0 && i < N && j >= 0 && j < M) {
-      const cellData = mappedPixelData[j][i];
-
-      // 颜色替换模式逻辑 - 选择源颜色
-      if (isClick && colorReplaceState.isActive && colorReplaceState.step === 'select-source') {
-        if (cellData && !cellData.isExternal && cellData.key && cellData.key !== TRANSPARENT_KEY) {
-          // 执行选择源颜色
-          handleCanvasColorSelect({
-            key: cellData.key,
-            color: cellData.color
-          });
-          setTooltipData(null);
-        }
-        return;
-      }
-
-      // 一键擦除模式逻辑
-      if (isClick && isEraseMode) {
-        if (cellData && !cellData.isExternal && cellData.key && cellData.key !== TRANSPARENT_KEY) {
-          // 执行洪水填充擦除
-          floodFillErase(j, i, cellData.key);
-          setIsEraseMode(false); // 擦除完成后退出擦除模式
-          setTooltipData(null);
-        }
-        return;
-      }
-
-      // Manual Coloring Logic - 保持原有的上色逻辑
-      if (isClick && isManualColoringMode && selectedColor) {
-        // 手动上色模式逻辑保持不变
-        // ...现有代码...
-        const newPixelData = mappedPixelData.map(row => row.map(cell => ({ ...cell })));
-        const currentCell = newPixelData[j]?.[i];
-
-        if (!currentCell) return;
-
-        const previousKey = currentCell.key;
-        const wasExternal = currentCell.isExternal;
-        
-        let newCellData: MappedPixel;
-        
-        if (selectedColor.key === TRANSPARENT_KEY) {
-          newCellData = { ...transparentColorData };
-        } else {
-          newCellData = { ...selectedColor, isExternal: false };
-        }
-
-        // Only update if state changes
-        if (newCellData.key !== previousKey || newCellData.isExternal !== wasExternal) {
-          saveEditSnapshot();
-          newPixelData[j][i] = newCellData;
-          setMappedPixelData(newPixelData);
-
-          // Update color counts
-          if (colorCounts) {
-            const newColorCounts = { ...colorCounts };
-            let newTotalCount = totalBeadCount;
-
-            // 处理之前颜色的减少（使用hex值）
-            if (!wasExternal && previousKey !== TRANSPARENT_KEY) {
-              const previousCell = mappedPixelData[j][i];
-              const previousHex = previousCell?.color?.toUpperCase();
-              if (previousHex && newColorCounts[previousHex]) {
-                newColorCounts[previousHex].count--;
-                if (newColorCounts[previousHex].count <= 0) {
-                  delete newColorCounts[previousHex];
-              }
-              newTotalCount--;
-              }
-            }
-
-            // 处理新颜色的增加（使用hex值）
-            if (!newCellData.isExternal && newCellData.key !== TRANSPARENT_KEY) {
-              const newHex = newCellData.color.toUpperCase();
-              if (!newColorCounts[newHex]) {
-                newColorCounts[newHex] = {
-                  count: 0,
-                  color: newHex
-                };
-              }
-              newColorCounts[newHex].count++;
-              newTotalCount++;
-            }
-
-            setColorCounts(newColorCounts);
-            setTotalBeadCount(newTotalCount);
-          }
-        }
-        
-        // 上色操作后隐藏提示
-        setTooltipData(null);
-      }
-      // Tooltip Logic (非手动上色模式点击或悬停)
-      else if (!isManualColoringMode) {
-        // 只有单元格实际有内容（非背景/外部区域）才会显示提示
-        if (cellData && !cellData.isExternal && cellData.key) {
-          // 检查是否已经显示了提示框，并且是否点击的是同一个位置
-          // 对于移动设备，位置可能有细微偏差，所以我们检查单元格索引而不是具体坐标
-          if (tooltipData) {
-            // 如果已经有提示框，计算当前提示框对应的格子的索引
-            const tooltipRect = canvas.getBoundingClientRect();
-            
-            // 还原提示框位置为相对于canvas的坐标
-            const prevX = tooltipData.x; // 页面X坐标
-            const prevY = tooltipData.y; // 页面Y坐标
-            
-            // 转换为相对于canvas的坐标
-            const prevCanvasX = (prevX - tooltipRect.left) * scaleX;
-            const prevCanvasY = (prevY - tooltipRect.top) * scaleY;
-            
-            // 计算之前显示提示框位置对应的网格索引
-            const prevCellI = Math.floor(prevCanvasX / cellWidthOutput);
-            const prevCellJ = Math.floor(prevCanvasY / cellHeightOutput);
-            
-            // 如果点击的是同一个格子，则切换tooltip的显示/隐藏状态
-            if (i === prevCellI && j === prevCellJ) {
-              setTooltipData(null); // 隐藏提示
-              return;
-            }
-          }
-          
-          // 计算相对于main元素的位置
-          const mainElement = mainRef.current;
-          if (mainElement) {
-            const mainRect = mainElement.getBoundingClientRect();
-            // 计算相对于main元素的坐标
-            const relativeX = pageX - mainRect.left - window.scrollX;
-            const relativeY = pageY - mainRect.top - window.scrollY;
-            
-            // 如果是移动/悬停到一个新的有效格子，或者点击了不同的格子，则显示提示
-            setTooltipData({
-              x: relativeX,
-              y: relativeY,
-              key: cellData.key,
-              color: cellData.color,
-            });
-          } else {
-            // 如果没有找到main元素，使用原始坐标
-            setTooltipData({
-              x: pageX,
-              y: pageY,
-              key: cellData.key,
-              color: cellData.color,
-            });
-          }
-        } else {
-          // 如果点击/悬停在外部区域或背景上，隐藏提示
-          setTooltipData(null);
-        }
-      }
-    } else {
-      // 如果点击/悬停在画布外部，隐藏提示
-      setTooltipData(null);
+    // 重建编辑器文档，否则工作台仍持有去背景前的旧文档，
+    // 下一次 onCommit 会用旧文档重新生成网格，覆盖掉去背景结果
+    if (isManualColoringMode) {
+      setEditorMountId((value) => value + 1);
     }
   };
 
@@ -1579,143 +1223,6 @@ export default function Home() {
     importPaletteInputRef.current?.click();
   };
 
-  // 新增：处理颜色高亮
-  const handleHighlightColor = (colorHex: string) => {
-    setHighlightColorKey(colorHex);
-  };
-
-  // 新增：高亮完成回调
-  const handleHighlightComplete = () => {
-    setHighlightColorKey(null);
-  };
-
-  // 新增：切换完整色板显示
-  const handleToggleFullPalette = () => {
-    setShowFullPalette(!showFullPalette);
-  };
-
-  // 新增：处理颜色选择，同时管理模式切换
-  const handleColorSelect = (colorData: { key: string; color: string; isExternal?: boolean }) => {
-    // 如果选择的是橡皮擦（透明色）且当前在颜色替换模式，退出替换模式
-    if (colorData.key === TRANSPARENT_KEY && colorReplaceState.isActive) {
-      setColorReplaceState({
-        isActive: false,
-        step: 'select-source'
-      });
-      setHighlightColorKey(null);
-    }
-    
-    // 选择任何颜色（包括橡皮擦）时，都应该退出一键擦除模式
-    if (isEraseMode) {
-      setIsEraseMode(false);
-    }
-    
-    // 设置选中的颜色
-    setSelectedColor(colorData);
-  };
-
-  // 新增：颜色替换相关处理函数
-  const handleColorReplaceToggle = () => {
-    setColorReplaceState(prev => {
-      if (prev.isActive) {
-        // 退出替换模式
-        return {
-          isActive: false,
-          step: 'select-source'
-        };
-      } else {
-        // 进入替换模式
-        // 只退出冲突的模式，但保持在手动上色模式下
-        setIsEraseMode(false);
-        setSelectedColor(null);
-        return {
-          isActive: true,
-          step: 'select-source'
-        };
-      }
-    });
-  };
-
-  // 新增：处理从画布选择源颜色
-  const handleCanvasColorSelect = (colorData: { key: string; color: string }) => {
-    if (colorReplaceState.isActive && colorReplaceState.step === 'select-source') {
-      // 高亮显示选中的颜色
-      setHighlightColorKey(colorData.color);
-      // 进入第二步：选择目标颜色
-      setColorReplaceState({
-        isActive: true,
-        step: 'select-target',
-        sourceColor: colorData
-      });
-    }
-  };
-
-  // 新增：执行颜色替换
-  const handleColorReplace = (sourceColor: { key: string; color: string }, targetColor: { key: string; color: string }) => {
-    if (!mappedPixelData || !gridDimensions) return;
-
-    const { N, M } = gridDimensions;
-    const newPixelData = mappedPixelData.map(row => row.map(cell => ({ ...cell })));
-    let replaceCount = 0;
-
-    // 遍历所有像素，替换匹配的颜色
-    for (let j = 0; j < M; j++) {
-      for (let i = 0; i < N; i++) {
-        const currentCell = newPixelData[j][i];
-        if (currentCell && !currentCell.isExternal && 
-            currentCell.color.toUpperCase() === sourceColor.color.toUpperCase()) {
-          // 替换颜色
-          newPixelData[j][i] = {
-            key: targetColor.key,
-            color: targetColor.color,
-            isExternal: false
-          };
-          replaceCount++;
-        }
-      }
-    }
-
-    if (replaceCount > 0) {
-      // 更新像素数据
-      saveEditSnapshot();
-      setMappedPixelData(newPixelData);
-
-      // 重新计算颜色统计
-      if (colorCounts) {
-        const newColorCounts: { [hexKey: string]: { count: number; color: string } } = {};
-        let newTotalCount = 0;
-
-        newPixelData.flat().forEach(cell => {
-          if (cell && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
-            const cellHex = cell.color.toUpperCase();
-            if (!newColorCounts[cellHex]) {
-              newColorCounts[cellHex] = {
-                count: 0,
-                color: cellHex
-              };
-            }
-            newColorCounts[cellHex].count++;
-            newTotalCount++;
-          }
-        });
-
-        setColorCounts(newColorCounts);
-        setTotalBeadCount(newTotalCount);
-      }
-
-      console.log(`颜色替换完成：将 ${replaceCount} 个 ${sourceColor.key} 替换为 ${targetColor.key}`);
-    }
-
-    // 退出替换模式
-    setColorReplaceState({
-      isActive: false,
-      step: 'select-source'
-    });
-    
-    // 清除高亮
-    setHighlightColorKey(null);
-  };
-
   // 生成完整色板数据（用户自定义色板中选中的所有颜色）
   const fullPaletteColors = useMemo(() => {
     const selectedColors: { key: string; color: string }[] = [];
@@ -1743,7 +1250,8 @@ export default function Home() {
     setGridDimensions({ N: nextWidth, M: nextHeight });
     setColorCounts(stats.colorCounts);
     setTotalBeadCount(stats.totalCount);
-    setInitialGridColorKeys(new Set(Object.keys(stats.colorCounts)));
+    // 不更新 initialGridColorKeys：它是颜色排除重映射的候选池，
+    // 只在新生成图纸（像素化/CSV导入）时初始化，手动编辑/撤回的 commit 不应覆盖它
   }, []);
 
   const editorInitialDocument = useMemo(() => {
@@ -1784,33 +1292,17 @@ export default function Home() {
     handleConfirmParameters(values);
   };
 
-
-  // Legacy editor chrome kept for incremental cleanup; retain bindings intentionally.
-  void ({
-    showExcludedColors,
-    setShowExcludedColors,
-    isCustomPalette,
-    highlightColorKey,
-    isFloatingPaletteOpen,
-    setIsFloatingPaletteOpen,
-    magnifierSelectionArea,
-    activeFloatingTool,
-    handleToggleMagnifier,
-    handleActivatePalette,
-    handleActivateMagnifier,
-    handleUndoEdit,
-    handleMagnifierPixelEdit,
-    handleEraseToggle,
-    handleGranularityInputChange,
-    handleSimilarityThresholdInputChange,
-    handleCanvasInteraction,
-    handleHighlightColor,
-    handleHighlightComplete,
-    handleToggleFullPalette,
-    handleColorSelect,
-    handleColorReplaceToggle,
-    handleColorReplace,
-  });
+  // 切换色号系统：编辑模式下需重建编辑器文档（editorInitialDocument 依赖 editorMountId），
+  // 重建会清空工作台撤回历史，因此与重新生成底稿一样先确认
+  const handleColorSystemChange = (system: ColorSystem) => {
+    if (system === selectedColorSystem) return;
+    if (isManualColoringMode) {
+      const confirmed = window.confirm("切换色号系统将重建编辑画布，当前撤回历史会被清空，是否继续？");
+      if (!confirmed) return;
+      setEditorMountId((value) => value + 1);
+    }
+    setSelectedColorSystem(system);
+  };
 
   return (
     <>
@@ -1899,10 +1391,8 @@ export default function Home() {
               }}
               onDownloadPattern={() => setIsDownloadSettingsOpen(true)}
               onEnterFocus={(projectId, revision) => {
-                localStorage.setItem('focusMode_pixelData', JSON.stringify(mappedPixelData));
-                localStorage.setItem('focusMode_gridDimensions', JSON.stringify(gridDimensions));
-                localStorage.setItem('focusMode_colorCounts', JSON.stringify(colorCounts));
-                localStorage.setItem('focusMode_selectedColorSystem', selectedColorSystem);
+                // 工作台已在回调前将文档保存到 IndexedDB，专注模式通过 ?project= 从 IndexedDB 加载；
+                // 旧版 focusMode_* localStorage 写入在大图纸上会触发 QuotaExceededError 导致无法跳转，已移除。
                 window.location.href = `/focus/?project=${encodeURIComponent(projectId)}&revision=${revision}`;
               }}
             />
@@ -1932,7 +1422,7 @@ export default function Home() {
       canRemoveBackground={Boolean(mappedPixelData && gridDimensions)}
       canUndoBackground={Boolean(bgRemovalSnapshot)}
       onToggleExcludeColor={handleToggleExcludeColor}
-      onColorSystemChange={setSelectedColorSystem}
+      onColorSystemChange={handleColorSystemChange}
       onApply={handleApplyGenerationParams}
       onRemoveBackground={handleAutoRemoveBackground}
       onUndoBackground={handleUndoBgRemoval}

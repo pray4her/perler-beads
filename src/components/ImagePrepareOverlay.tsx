@@ -53,20 +53,19 @@ function createInitialCrop(
 ): Crop {
   if (aspect) {
     return centerCrop(
-      makeAspectCrop({ unit: "%", width: 90 }, aspect, width, height),
+      makeAspectCrop({ unit: "%", width: 100 }, aspect, width, height),
       width,
       height,
     );
   }
-  return centerCrop(
-    {
-      unit: "%",
-      width: 90,
-      height: 90,
-    },
-    width,
-    height,
-  );
+  // Free mode: select the full image so users can confirm without manual framing.
+  return {
+    unit: "%",
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+  };
 }
 
 export default function ImagePrepareOverlay({
@@ -120,6 +119,28 @@ export default function ImagePrepareOverlay({
   }, [imageSrc]);
 
   useEffect(() => {
+    const needsTransform =
+      rotation !== 0 || flip.horizontal || flip.vertical;
+
+    // Identity transform returns the same src; clearing crop here would leave
+    // completedCrop null because <img onLoad> does not re-fire for unchanged src.
+    if (!needsTransform) {
+      let cancelled = false;
+      setDisplaySrc(imageSrc);
+      setIsTransforming(false);
+      queueMicrotask(() => {
+        if (cancelled) return;
+        const image = imgRef.current;
+        if (!image?.complete || !image.width || !image.height) return;
+        const next = createInitialCrop(image.width, image.height, aspect);
+        setCrop(next);
+        setCompletedCrop(convertToPixelCrop(next, image.width, image.height));
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     let cancelled = false;
     setIsTransforming(true);
     void transformImageSrc(imageSrc, rotation, flip)
@@ -138,6 +159,8 @@ export default function ImagePrepareOverlay({
     return () => {
       cancelled = true;
     };
+  // Only re-ensure crop on src/orientation change; aspect is handled by onLoad / applyAspectPreset.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid resetting manual crops when aspect preset changes
   }, [imageSrc, rotation, flip]);
 
   useEffect(() => {
@@ -167,14 +190,24 @@ export default function ImagePrepareOverlay({
 
   const handleComplete = async () => {
     const image = imgRef.current;
-    if (!image || !completedCrop || isSubmitting || isTransforming) return;
-    if (completedCrop.width < 2 || completedCrop.height < 2) {
+    if (!image || isSubmitting || isTransforming) return;
+    const cropToUse =
+      completedCrop && completedCrop.width >= 2 && completedCrop.height >= 2
+        ? completedCrop
+        : ({
+            unit: "px",
+            x: 0,
+            y: 0,
+            width: image.naturalWidth || image.width,
+            height: image.naturalHeight || image.height,
+          } satisfies PixelCrop);
+    if (cropToUse.width < 2 || cropToUse.height < 2) {
       setLocalError("裁剪区域太小，请拖大边框后再试");
       return;
     }
     setLocalError(null);
     try {
-      const cropped = await cropToImg(image, completedCrop);
+      const cropped = await cropToImg(image, cropToUse);
       onComplete(cropped);
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : "整理图片失败，请重试");
@@ -352,7 +385,7 @@ export default function ImagePrepareOverlay({
             整理图片
           </p>
           <p className="mt-0.5 text-[12px] text-[#faf9f5]/70">
-            拖动直角或边线调整裁剪
+            默认已框选全图，可拖动直角或边线调整
           </p>
         </div>
         <button
@@ -477,7 +510,7 @@ export default function ImagePrepareOverlay({
               <button
                 key={action.key}
                 type="button"
-                disabled={busy || (isComplete && !completedCrop)}
+                disabled={busy}
                 onClick={action.onClick}
                 className={cn(
                   "flex w-12 flex-col items-center gap-1.5 rounded-lg bg-transparent p-0 text-[11px] tracking-tight transition-[color,opacity,transform] duration-150 active:translate-y-px disabled:opacity-50",

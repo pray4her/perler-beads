@@ -1,4 +1,3 @@
-import { PaletteColor } from './pixelation';
 import colorSystemMapping from '../app/colorSystemMapping.json';
 
 // 定义色号系统类型并导出
@@ -41,23 +40,6 @@ export function loadFullColorMapping(): Map<string, Record<ColorSystem, string>>
     mapping.set(baseKey, colorData as Record<ColorSystem, string>);
   });
   return mapping;
-}
-
-// 将色板转换到指定色号系统
-export function convertPaletteToColorSystem(
-  palette: PaletteColor[],
-  colorSystem: ColorSystem
-): PaletteColor[] {
-  return palette.map(color => {
-    const colorMapping = typedColorSystemMapping[color.hex];
-    if (colorMapping && colorMapping[colorSystem]) {
-      return {
-        ...color,
-        key: colorMapping[colorSystem]
-      };
-    }
-    return color; // 如果找不到映射，保持原样
-  });
 }
 
 // 获取指定色号系统的显示键 - 基于hex值的简化版本

@@ -7,6 +7,7 @@ import {
   getLinePoints,
   getRectanglePoints,
   moveSelectionPatches,
+  transformSelectionDocument,
   withSymmetry,
 } from "@/editor/operations";
 import { rectangularSelection } from "@/editor/selection";
@@ -55,5 +56,37 @@ describe("editor operations", () => {
       { index: 0, before: 1, after: 0 },
       { index: 1, before: 0, after: 1 },
     ]));
+  });
+
+  it("rotates a non-square selection into a clamped footprint without dropping or straying", () => {
+    const grid = [
+      [cell("A", "#ff0000"), cell("B", "#00ff00")],
+      [cell("C", "#0000ff"), cell("D", "#ffff00")],
+      [cell("E", "#ff00ff"), cell("F", "#00ffff")],
+    ];
+    const document = createEditorDocument(grid, "MARD");
+    // 2×1 selection on the bottom row: the rotated 1×2 footprint would overflow below.
+    const selection = rectangularSelection(2, 3, { startRow: 2, startCol: 0, endRow: 2, endCol: 1 });
+    const result = transformSelectionDocument(document, selection, "rotate-90");
+    expect(result.width).toBe(1);
+    expect(result.height).toBe(2);
+    const next = document.cells.slice();
+    for (const patch of result.patches) next[patch.index] = patch.after;
+    // Footprint shifted up: (1,0)=E, (2,0)=F, (2,1) cleared; every other cell untouched.
+    expect(Array.from(next)).toEqual([1, 2, 5, 4, 6, 0]);
+    expect(result.selection.bounds).toEqual({ startRow: 1, startCol: 0, endRow: 2, endCol: 0 });
+    expect(result.selection.mask.reduce((sum, value) => sum + value, 0)).toBe(2);
+  });
+
+  it("never writes outside the mask when flipping a non-rectangular selection", () => {
+    const grid = [[cell("A", "#ff0000"), cell("B", "#00ff00"), cell("C", "#0000ff")]];
+    const document = createEditorDocument(grid, "MARD");
+    const selection = rectangularSelection(3, 1, { startRow: 0, startCol: 0, endRow: 0, endCol: 2 });
+    selection.mask[2] = 0; // Right cell is not selected; its content must survive the flip.
+    const result = transformSelectionDocument(document, selection, "flip-horizontal");
+    const next = document.cells.slice();
+    for (const patch of result.patches) next[patch.index] = patch.after;
+    expect(Array.from(next)).toEqual([0, 2, 3]);
+    expect(result.selection).toBe(selection);
   });
 });
