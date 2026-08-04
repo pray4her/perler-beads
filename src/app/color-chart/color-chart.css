@@ -1,0 +1,346 @@
+/* ==========================================================================
+   色号对照表页（/color-chart/）特有样式
+   共享骨架样式在 src/app/content.css；此处只覆盖本页的搜索、分组与表格。
+   仅使用 CSS 变量配色，深浅主题自动跟随 globals.css。
+   ========================================================================== */
+
+.cc-hero {
+  margin-bottom: 48px;
+}
+
+.cc-disclaimer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 640px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--home-soft-rule);
+  border-radius: 10px;
+  background: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+
+.cc-disclaimer svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+/* ---------- 搜索（滚动时吸顶） ---------- */
+
+.cc-search-shell {
+  position: sticky;
+  top: 68px;
+  z-index: 30;
+  padding: 10px 0;
+  background: color-mix(in srgb, var(--background) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.cc-search-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.cc-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 6px 0 16px;
+  border: 1px solid var(--home-rule);
+  border-radius: 999px;
+  background: var(--background);
+}
+
+.cc-search:focus-within {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.cc-search > svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.cc-search input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  color: var(--foreground);
+  outline: none;
+}
+
+.cc-search input::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* 去掉 WebKit 搜索框自带的清除按钮，统一使用自定义清除按钮 */
+.cc-search input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.cc-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.cc-search-clear:hover {
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+}
+
+.cc-search-clear:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: -2px;
+}
+
+.cc-search-clear svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cc-count {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cc-search-hint {
+  margin: 4px 0 28px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
+.cc-scroll-hint {
+  display: none;
+  margin: -16px 0 20px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* ---------- 色系分组 ---------- */
+
+.cc-group {
+  margin-bottom: 40px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 480px;
+}
+
+.cc-group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.cc-hue-dot {
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--home-rule);
+}
+
+.cc-dot-red { background: #d8453a; }
+.cc-dot-orange { background: #e8833a; }
+.cc-dot-yellow { background: #e8c53a; }
+.cc-dot-yellowGreen { background: #a8c53a; }
+.cc-dot-green { background: #3aa85c; }
+.cc-dot-cyan { background: #3ab0b0; }
+.cc-dot-blue { background: #3a6fd8; }
+.cc-dot-purple { background: #8a5cd8; }
+.cc-dot-pink { background: #e87ab0; }
+.cc-dot-brown { background: #9d6b4a; }
+.cc-dot-neutral { background: #9a9a94; }
+
+.cc-group-count {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 对照表 ---------- */
+
+.cc-table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--home-soft-rule);
+  border-radius: 12px;
+  background: var(--background);
+  scrollbar-width: thin;
+}
+
+.cc-table-scroll:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.cc-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.cc-table th {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--home-rule);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  color: var(--muted-foreground);
+  background: var(--background);
+  white-space: nowrap;
+}
+
+.cc-table td {
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--home-soft-rule);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cc-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cc-table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.cc-table tbody tr:hover {
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+.cc-swatch {
+  display: block;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--home-rule);
+}
+
+/* ---------- 空结果 ---------- */
+
+.cc-empty {
+  padding: 48px 24px;
+  border: 1px dashed var(--home-rule);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.cc-empty strong {
+  display: block;
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.cc-empty p {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+
+.cc-empty-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 20px;
+  border: 1px solid var(--home-rule);
+  border-radius: 999px;
+  background: var(--background);
+  font-size: 14px;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.cc-empty-clear:hover {
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.cc-empty-clear:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+/* ---------- 回工具引导 ---------- */
+
+.cc-tool-cta {
+  margin-top: 8px;
+}
+
+/* ---------- 桌面端：表头在长分组内吸顶 ---------- */
+
+@media (min-width: 768px) {
+  .cc-table-scroll {
+    overflow-x: visible;
+  }
+
+  .cc-table th {
+    position: sticky;
+    top: 132px;
+    z-index: 5;
+  }
+}
+
+/* ---------- 移动端 ---------- */
+
+@media (max-width: 767px) {
+  .cc-search-shell {
+    top: 64px;
+  }
+
+  .cc-search-row {
+    gap: 10px;
+  }
+
+  .cc-count {
+    font-size: 12px;
+  }
+
+  .cc-scroll-hint {
+    display: block;
+  }
+}
+
+/* ---------- 动效降级 ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-search-clear,
+  .cc-empty-clear,
+  .cc-table tbody tr {
+    transition: none;
+  }
+}

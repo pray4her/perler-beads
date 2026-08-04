@@ -1,0 +1,138 @@
+/* ==========================================================================
+   熨烫指南页（/ironing-guide/）特有样式
+   共享骨架（导航 / 面包屑 / 正文排版 / 互链区）见 src/app/content.css。
+   只使用 CSS 变量取色，自动适配深色主题。
+   ========================================================================== */
+
+/* ---------- 引言 ---------- */
+
+.ironing-intro {
+  margin-bottom: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--home-soft-rule, color-mix(in srgb, var(--foreground) 12%, transparent));
+}
+
+/* ---------- 分组手风琴 FAQ ---------- */
+
+.ironing-faq-list {
+  border-top: 1px solid var(--home-rule, color-mix(in srgb, var(--foreground) 24%, transparent));
+}
+
+.ironing-faq-list details {
+  border-bottom: 1px solid var(--home-rule, color-mix(in srgb, var(--foreground) 24%, transparent));
+}
+
+.ironing-faq-list summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 16px 44px 16px 0;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  list-style: none;
+  transition: opacity 160ms ease;
+}
+
+.ironing-faq-list summary::-webkit-details-marker {
+  display: none;
+}
+
+.ironing-faq-list summary::marker {
+  content: "";
+}
+
+.ironing-faq-list summary::after {
+  content: "+";
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  translate: 0 -50%;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
+  opacity: 0.55;
+  transition: transform 200ms ease;
+}
+
+.ironing-faq-list details[open] summary::after {
+  transform: rotate(45deg);
+}
+
+.ironing-faq-list summary:hover {
+  opacity: 0.72;
+}
+
+.ironing-faq-list summary:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.ironing-faq-list details p {
+  max-width: 64ch;
+  margin: 0;
+  padding: 0 44px 20px 0;
+  color: var(--muted-foreground);
+}
+
+/* ---------- 结尾内链 ---------- */
+
+.ironing-closing {
+  padding-top: 32px;
+  border-top: 1px solid var(--home-rule, color-mix(in srgb, var(--foreground) 24%, transparent));
+}
+
+.ironing-closing p {
+  max-width: 60ch;
+}
+
+.ironing-closing-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 28px;
+  margin-top: 18px;
+}
+
+.ironing-closing-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ironing-closing-primary svg {
+  width: 16px;
+  height: 16px;
+  transition: translate 160ms ease;
+}
+
+.ironing-closing-primary:hover svg {
+  translate: 3px 0;
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 767px) {
+  .ironing-faq-list summary {
+    padding-right: 36px;
+  }
+
+  .ironing-faq-list details p {
+    padding-right: 0;
+  }
+}
+
+/* ---------- 动效降级 ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .ironing-faq-list summary,
+  .ironing-faq-list summary::after,
+  .ironing-closing-primary svg {
+    transition: none;
+  }
+}

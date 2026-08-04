@@ -1,0 +1,157 @@
+/* ==========================================================================
+   图纸教程页特有样式（/pattern-tutorial/）
+   共享框架样式在 src/app/content.css；这里只覆盖本页的布局组件：
+   三种画法对比卡片、五步流程（编号 + 截图 figure）。
+   颜色一律走 CSS 变量，深色主题随 globals.css 的 prefers-color-scheme 自动适配。
+   ========================================================================== */
+
+/* ---------- 三种画法对比 ---------- */
+
+.tutorial-methods {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin: 20px 0 24px;
+}
+
+.tutorial-method {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  border: 1px solid var(--home-soft-rule);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.tutorial-method--recommended {
+  border-color: var(--home-rule);
+}
+
+.tutorial-method h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+}
+
+.tutorial-method-badge {
+  flex-shrink: 0;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.tutorial-method p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.tutorial-method > strong {
+  font-size: 13px;
+  opacity: 0.66;
+}
+
+.tutorial-method ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.tutorial-method li {
+  font-size: 14px;
+}
+
+/* ---------- 五步流程 ---------- */
+
+.tutorial-steps {
+  list-style: none;
+  margin: 24px 0;
+  padding: 0;
+  counter-reset: tutorial-step;
+}
+
+.tutorial-step {
+  counter-increment: tutorial-step;
+  position: relative;
+  padding-left: 60px;
+}
+
+.tutorial-step + .tutorial-step {
+  margin-top: 40px;
+}
+
+.tutorial-step::before {
+  content: counter(tutorial-step);
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--home-rule);
+  border-radius: 50%;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tutorial-step h3 {
+  margin-top: 10px;
+}
+
+/* 截图 figure：固定比例占位背景，截图缺失时版面不塌陷 */
+.tutorial-figure {
+  margin: 16px 0 0;
+}
+
+.tutorial-figure-frame {
+  display: block;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--home-soft-rule);
+  border-radius: 12px;
+  background:
+    linear-gradient(90deg, var(--home-soft-rule) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(var(--home-soft-rule) 1px, transparent 1px) 0 0 / 40px 40px,
+    var(--muted);
+}
+
+.tutorial-figure-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tutorial-figure figcaption {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  opacity: 0.66;
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 900px) {
+  .tutorial-methods {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 767px) {
+  .tutorial-step {
+    padding-left: 48px;
+  }
+
+  .tutorial-step::before {
+    width: 34px;
+    height: 34px;
+    font-size: 14px;
+  }
+}

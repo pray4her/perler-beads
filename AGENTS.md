@@ -12,6 +12,7 @@ This is a Next.js 15, React 19, and TypeScript static PWA. Routes and global sty
 - `npm start` — serve the generated `out/` directory locally.
 - `npm run lint` — run the configured Next.js/TypeScript ESLint checks.
 - `npm run check:frontend-regressions` — verify known routing, sheet-state, and slider regressions.
+- `npm run capture:tutorial-shots` — re-capture the five `/pattern-tutorial/` step screenshots into `public/tutorial/` from the built `out/` (run `npm run build` first, and again afterwards so `out/tutorial/` stays in sync; ADR 0005).
 - `npm run pages:deploy` — build and deploy `out/` to Cloudflare Pages; use only with configured Wrangler credentials.
 
 ## Coding Style & Naming Conventions

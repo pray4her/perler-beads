@@ -1,0 +1,342 @@
+/* ==========================================================================
+   内容页共享样式（图纸教程 / 色号对照表 / 熨烫指南）
+   由 src/components/content/ContentShell.tsx 引入。
+   设计语言延续首页：暖白底、近黑文字、Geist 字体、hairline 分隔。
+   各页面特有样式放在各自路由目录的 css 文件中。
+   ========================================================================== */
+
+.content-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* ---------- 顶部导航 ---------- */
+
+.content-nav-shell {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--home-soft-rule, rgba(20, 20, 19, 0.08));
+}
+
+.content-nav {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.content-nav .home-brand {
+  flex-shrink: 0;
+}
+
+.content-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.content-nav-links::-webkit-scrollbar {
+  display: none;
+}
+
+.content-nav-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  color: var(--foreground);
+  text-decoration: none;
+  white-space: nowrap;
+  opacity: 0.72;
+  transition: opacity 160ms ease, background-color 160ms ease;
+}
+
+.content-nav-links a:hover {
+  opacity: 1;
+  background: rgba(20, 20, 19, 0.05);
+}
+
+.content-nav-links a[aria-current="page"] {
+  opacity: 1;
+  font-weight: 600;
+  background: rgba(20, 20, 19, 0.07);
+}
+
+.content-nav-links a:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.content-nav-cta {
+  flex-shrink: 0;
+}
+
+/* ---------- 面包屑 ---------- */
+
+.content-breadcrumb {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 20px 24px 0;
+  width: 100%;
+}
+
+.content-breadcrumb ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.content-breadcrumb li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.64;
+}
+
+.content-breadcrumb li + li::before {
+  content: "/";
+  opacity: 0.5;
+}
+
+.content-breadcrumb a {
+  color: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.content-breadcrumb a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.content-breadcrumb a:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.content-breadcrumb li[aria-current="page"] {
+  opacity: 1;
+  font-weight: 600;
+}
+
+/* ---------- 正文排版 ---------- */
+
+.content-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px 24px 8px;
+}
+
+.content-main > article {
+  max-width: 760px;
+}
+
+.content-main h1 {
+  font-size: clamp(30px, 5vw, 44px);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  margin: 0 0 16px;
+}
+
+.content-main .content-lead {
+  font-size: 17px;
+  line-height: 1.7;
+  opacity: 0.78;
+  margin: 0 0 40px;
+  max-width: 640px;
+}
+
+.content-main section {
+  margin-bottom: 48px;
+}
+
+.content-main h2 {
+  font-size: clamp(22px, 3.4vw, 28px);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  font-weight: 700;
+  margin: 0 0 16px;
+  scroll-margin-top: 96px;
+}
+
+.content-main h3 {
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 600;
+  margin: 28px 0 10px;
+}
+
+.content-main p,
+.content-main li {
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.content-main p {
+  margin: 0 0 14px;
+}
+
+.content-main ul,
+.content-main ol {
+  margin: 0 0 14px;
+  padding-left: 22px;
+}
+
+.content-main li + li {
+  margin-top: 6px;
+}
+
+.content-main a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgba(20, 20, 19, 0.35);
+  transition: text-decoration-color 160ms ease;
+}
+
+.content-main a:hover {
+  text-decoration-color: currentColor;
+}
+
+.content-main a:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.content-main strong {
+  font-weight: 600;
+}
+
+/* ---------- 「继续了解」互链区 ---------- */
+
+.content-related {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 24px 8px;
+}
+
+.content-related h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 18px;
+}
+
+.content-related .guides-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+/* ---------- 回工具 CTA ---------- */
+
+.content-cta {
+  width: 100%;
+  max-width: 1080px;
+  margin: 40px auto 0;
+  padding: 28px 24px 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.content-cta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.content-cta strong {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.content-cta span {
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 767px) {
+  .content-nav {
+    padding: 10px 16px;
+    gap: 12px;
+  }
+
+  .content-nav-cta {
+    display: none;
+  }
+
+  .content-breadcrumb {
+    padding: 16px 16px 0;
+  }
+
+  .content-main {
+    padding: 24px 16px 8px;
+  }
+
+  .content-related {
+    padding: 16px 16px 8px;
+  }
+
+  .content-related .guides-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .content-cta {
+    padding: 24px 16px 56px;
+  }
+}
+
+/* ---------- 深色主题（跟随系统，与 globals.css 一致） ---------- */
+
+@media (prefers-color-scheme: dark) {
+  .content-nav-links a:hover {
+    background: rgba(250, 249, 245, 0.08);
+  }
+
+  .content-nav-links a[aria-current="page"] {
+    background: rgba(250, 249, 245, 0.12);
+  }
+
+  .content-main a {
+    text-decoration-color: rgba(250, 249, 245, 0.35);
+  }
+}
+
+/* ---------- 动效降级 ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .content-nav-links a,
+  .content-main a {
+    transition: none;
+  }
+}

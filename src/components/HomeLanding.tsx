@@ -1,16 +1,17 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import {
   ArrowRight,
+  BookOpen,
   Check,
   Download,
-  Grid3X3,
+  Flame,
   LockKeyhole,
   Menu,
-  Palette,
   Pencil,
-  ShieldCheck,
+  SwatchBook,
   Upload,
   WandSparkles,
   X,
@@ -26,8 +27,9 @@ import {
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import InstallPWA from "@/components/InstallPWA";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
+import SiteFooter from "@/components/SiteFooter";
 import { Button } from "@/components/ui/button";
-import { useT } from "@/i18n/context";
+import { useLanguage, useT } from "@/i18n/context";
 
 interface HomeLandingProps {
   hasCurrentPattern: boolean;
@@ -153,6 +155,7 @@ function HeroPatternDemo({ onFileDrop }: { onFileDrop: (file: File) => void }) {
 
 function HomeNavigation({ onUpload, heroRef }: { onUpload: () => void; heroRef: RefObject<HTMLElement | null> }) {
   const t = useT();
+  const { lang } = useLanguage();
   const [menuOpen, setMenuOpen] = useState(false);
   const [heroVisible, setHeroVisible] = useState(true);
 
@@ -187,8 +190,13 @@ function HomeNavigation({ onUpload, heroRef }: { onUpload: () => void; heroRef: 
         </a>
         <div className={`home-nav-links ${menuOpen ? "is-open" : ""}`}>
           <a href="#how-it-works" onClick={closeMenu}>{t.landing.nav.howItWorks}</a>
-          <a href="#workflow" onClick={closeMenu}>{t.landing.nav.workflow}</a>
-          <a href="#privacy" onClick={closeMenu}>{t.landing.nav.privacy}</a>
+          {lang === "zh" ? (
+            <>
+              <Link href="/pattern-tutorial/" onClick={closeMenu}>{t.landing.nav.tutorial}</Link>
+              <Link href="/color-chart/" onClick={closeMenu}>{t.landing.nav.colorChart}</Link>
+              <Link href="/ironing-guide/" onClick={closeMenu}>{t.landing.nav.ironingGuide}</Link>
+            </>
+          ) : null}
           <a href="#faq" onClick={closeMenu}>{t.landing.nav.faq}</a>
         </div>
         <div className="home-nav-actions">
@@ -226,6 +234,7 @@ export default function HomeLanding({
   onFileDrop,
 }: HomeLandingProps) {
   const t = useT();
+  const { lang } = useLanguage();
   const heroRef = useRef<HTMLElement>(null);
   const shouldReduceMotion = useReducedMotion();
   const { scrollYProgress } = useScroll({ target: heroRef, offset: ["start start", "end start"] });
@@ -283,65 +292,51 @@ export default function HomeLanding({
           <span><Check aria-hidden="true" />{t.landing.trust.free}</span>
         </section>
 
-        <RevealSection id="how-it-works" className="home-section process-section" labelledBy="process-title">
+        <RevealSection id="how-it-works" className="home-section process-section" labelledBy="about-title">
           <div className="section-heading">
-            <h2 id="process-title">{t.landing.process.title}</h2>
-            <p>{t.landing.process.subtitle}</p>
+            <h2 id="about-title">{t.landing.about.title}</h2>
+            <p>{t.landing.about.intro}</p>
           </div>
-          <ol className="process-list">
-            <li><Upload aria-hidden="true" /><div><strong>{t.landing.process.step1Title}</strong><span>{t.landing.process.step1Desc}</span></div></li>
-            <li><Pencil aria-hidden="true" /><div><strong>{t.landing.process.step2Title}</strong><span>{t.landing.process.step2Desc}</span></div></li>
-            <li><Download aria-hidden="true" /><div><strong>{t.landing.process.step3Title}</strong><span>{t.landing.process.step3Desc}</span></div></li>
-          </ol>
+          <ul className="process-list">
+            <li><WandSparkles aria-hidden="true" /><div><strong>{t.landing.about.capability1Title}</strong><span>{t.landing.about.capability1Desc}</span></div></li>
+            <li><Pencil aria-hidden="true" /><div><strong>{t.landing.about.capability2Title}</strong><span>{t.landing.about.capability2Desc}</span></div></li>
+            <li><Download aria-hidden="true" /><div><strong>{t.landing.about.capability3Title}</strong><span>{t.landing.about.capability3Desc}</span></div></li>
+          </ul>
+          {lang === "zh" ? (
+            <p className="about-more">
+              <Link href="/pattern-tutorial/">{t.landing.about.tutorialLink}<ArrowRight aria-hidden="true" /></Link>
+            </p>
+          ) : null}
         </RevealSection>
 
-        <RevealSection className="home-section output-section" labelledBy="output-title">
-          <div className="output-artwork">
-            <Image
-              src="/home/PatternImage1.png"
-              alt={t.landing.output.imageAlt}
-              fill
-              sizes="(max-width: 767px) calc(100vw - 48px), 52vw"
-            />
+        {lang === "zh" ? (
+        <RevealSection id="guides" className="home-section guides-section" labelledBy="guides-title">
+          <div className="section-heading">
+            <h2 id="guides-title">{t.landing.guides.title}</h2>
+            <p>{t.landing.guides.subtitle}</p>
           </div>
-          <div className="output-copy">
-            <h2 id="output-title">{t.landing.output.title}</h2>
-            <p>{t.landing.output.subtitle}</p>
-            <div className="output-facts">
-              <article><Grid3X3 aria-hidden="true" /><div><strong>{t.landing.output.fact1Title}</strong><span>{t.landing.output.fact1Desc}</span></div></article>
-              <article><Palette aria-hidden="true" /><div><strong>{t.landing.output.fact2Title}</strong><span>{t.landing.output.fact2Desc}</span></div></article>
-              <article><ShieldCheck aria-hidden="true" /><div><strong>{t.landing.output.fact3Title}</strong><span>{t.landing.output.fact3Desc}</span></div></article>
-            </div>
-          </div>
-        </RevealSection>
-
-        <RevealSection id="workflow" className="home-section workflow-section" labelledBy="workflow-title">
-          <div className="workflow-intro">
-            <h2 id="workflow-title">{t.landing.workflow.title}</h2>
-            <p>{t.landing.workflow.subtitle}</p>
-          </div>
-          <div className="workflow-steps">
-            <article>
-              <WandSparkles aria-hidden="true" />
-              <div><strong>{t.landing.workflow.generateTitle}</strong><p>{t.landing.workflow.generateDesc}</p></div>
-            </article>
-            <article>
-              <Pencil aria-hidden="true" />
-              <div><strong>{t.landing.workflow.editTitle}</strong><p>{t.landing.workflow.editDesc}</p></div>
-            </article>
-            <article>
-              <Grid3X3 aria-hidden="true" />
-              <div><strong>{t.landing.workflow.focusTitle}</strong><p>{t.landing.workflow.focusDesc}</p></div>
-            </article>
-          </div>
-          <div className="workflow-palette" role="img" aria-label={t.landing.workflow.paletteAriaLabel}>
-            <span style={{ "--swatch": "#161a37" } as React.CSSProperties} />
-            <span style={{ "--swatch": "#9f897b" } as React.CSSProperties} />
-            <span style={{ "--swatch": "#f4dfe1" } as React.CSSProperties} />
-            <span style={{ "--swatch": "#6ac8dc" } as React.CSSProperties} />
-            <span style={{ "--swatch": "#c67c8d" } as React.CSSProperties} />
+          <div className="guides-grid">
+            <Link className="guide-card" href="/pattern-tutorial/">
+              <BookOpen aria-hidden="true" />
+              <strong>{t.landing.guides.tutorialTitle}</strong>
+              <p>{t.landing.guides.tutorialDesc}</p>
+              <span className="guide-card-cta">{t.landing.guides.cardCta}<ArrowRight aria-hidden="true" /></span>
+            </Link>
+            <Link className="guide-card" href="/color-chart/">
+              <SwatchBook aria-hidden="true" />
+              <strong>{t.landing.guides.colorChartTitle}</strong>
+              <p>{t.landing.guides.colorChartDesc}</p>
+              <span className="guide-card-cta">{t.landing.guides.cardCta}<ArrowRight aria-hidden="true" /></span>
+            </Link>
+            <Link className="guide-card" href="/ironing-guide/">
+              <Flame aria-hidden="true" />
+              <strong>{t.landing.guides.ironingTitle}</strong>
+              <p>{t.landing.guides.ironingDesc}</p>
+              <span className="guide-card-cta">{t.landing.guides.cardCta}<ArrowRight aria-hidden="true" /></span>
+            </Link>
           </div>
         </RevealSection>
+        ) : null}
 
         <RevealSection id="privacy" className="home-section privacy-section" labelledBy="privacy-title">
           <div className="privacy-symbol" aria-hidden="true"><LockKeyhole /></div>
@@ -350,7 +345,13 @@ export default function HomeLanding({
             <p>{t.landing.privacy.subtitle}</p>
             <div className="privacy-facts">
               <span><strong>{t.landing.privacy.localTitle}</strong>{t.landing.privacy.localDesc}</span>
-              <span><strong>{t.landing.privacy.palettesTitle}</strong>{t.landing.privacy.palettesDesc}</span>
+              <span>
+                <strong>{t.landing.privacy.palettesTitle}</strong>
+                {t.landing.privacy.palettesDesc}
+                {lang === "zh" ? (
+                  <Link className="privacy-inline-link" href="/color-chart/">{t.landing.privacy.palettesLink}</Link>
+                ) : null}
+              </span>
               <span><strong>{t.landing.privacy.customTitle}</strong>{t.landing.privacy.customDesc}</span>
             </div>
           </div>
@@ -365,7 +366,11 @@ export default function HomeLanding({
             <details><summary>{t.landing.faq.q1}</summary><p>{t.landing.faq.a1}</p></details>
             <details><summary>{t.landing.faq.q2}</summary><p>{t.landing.faq.a2}</p></details>
             <details><summary>{t.landing.faq.q3}</summary><p>{t.landing.faq.a3}</p></details>
-            <details><summary>{t.landing.faq.q4}</summary><p>{t.landing.faq.a4}</p></details>
+            {lang === "zh" ? (
+              <p className="faq-more">
+                <Link href="/ironing-guide/">{t.landing.faq.ironingLink}<ArrowRight aria-hidden="true" /></Link>
+              </p>
+            ) : null}
           </div>
           <div className="home-final-cta">
             <div><strong>{t.landing.faq.finalCtaTitle}</strong><span>{t.landing.faq.finalCtaDesc}</span></div>
@@ -376,11 +381,7 @@ export default function HomeLanding({
           </div>
         </RevealSection>
       </main>
-      <footer className="home-footer">
-        <a href="#top" className="home-brand"><span className="home-brand-mark" aria-hidden="true"><i /></span><span>{t.landing.brand}</span></a>
-        <p>{t.landing.footer.tagline}</p>
-        <p>{t.landing.footer.copyright(new Date().getFullYear())}</p>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

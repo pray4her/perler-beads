@@ -9,6 +9,7 @@
  * 4. Pointer movement must stay off React state in the pixel editor hot path.
  * 5. Editor tools, bidirectional history, centered resize, and both export surfaces remain wired.
  * 6. i18n plumbing stays in place (dictionary namespaces, metadataBase, language alternates, 301 redirects).
+ * 7. Content pages (ADR 0005) keep routes, canonicals, sitemap entries, screenshots, dictionaries and home links.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -234,6 +235,55 @@ if (!/^\/focus\/\s+\/zh\/focus\/\s+301$/m.test(redirects)) {
 const robots = read('public/robots.txt');
 if (!/^Sitemap:\s*https:\/\/perlerbeads\.pray4her\.xyz\/sitemap\.xml$/m.test(robots)) {
   failures.push('i18n-seo: robots.txt must declare the production sitemap URL');
+}
+
+// --- 8) Content pages (ADR 0005: 教程 / 色号对照表 / 熨烫指南) ---
+const contentRoutes = [
+  ['pattern-tutorial', '/pattern-tutorial/'],
+  ['color-chart', '/color-chart/'],
+  ['ironing-guide', '/ironing-guide/'],
+];
+for (const [route, canonicalPath] of contentRoutes) {
+  const rel = `src/app/${route}/page.tsx`;
+  if (!fs.existsSync(path.join(root, rel))) {
+    failures.push(`content-pages: ${rel} is missing`);
+    continue;
+  }
+  const src = read(rel);
+  if (!/alternates:\s*\{[^}]*canonical/.test(src) || !src.includes(`"${canonicalPath}"`)) {
+    failures.push(`content-pages: ${rel} must declare alternates canonical for ${canonicalPath}`);
+  }
+}
+const sitemapSrc = read('src/app/sitemap.ts');
+for (const [, canonicalPath] of contentRoutes) {
+  if (!sitemapSrc.includes(canonicalPath)) {
+    failures.push(`content-pages: src/app/sitemap.ts must include ${canonicalPath}`);
+  }
+}
+for (const shot of ['1-upload', '2-prepare', '3-generate', '4-edit', '5-export']) {
+  const rel = `public/tutorial/step-${shot}.png`;
+  const filePath = path.join(root, rel);
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
+    failures.push(`content-pages: ${rel} is missing or empty`);
+  }
+}
+const zhIndex = read('src/i18n/dictionaries/zh/index.ts');
+for (const ns of ['tutorial', 'colorChart', 'ironingGuide', 'contentPages']) {
+  const rel = `src/i18n/dictionaries/zh/${ns}.ts`;
+  if (!fs.existsSync(path.join(root, rel))) {
+    failures.push(`content-pages: ${rel} is missing`);
+  }
+  if (!new RegExp(`\\b${ns}\\b`).test(zhIndex)) {
+    failures.push(`content-pages: zh/index.ts must register the ${ns} namespace`);
+  }
+}
+if (!/id="guides"/.test(landing)) {
+  failures.push('content-pages: HomeLanding must keep the #guides section');
+}
+for (const [, canonicalPath] of contentRoutes) {
+  if (!landing.includes(`href="${canonicalPath}"`)) {
+    failures.push(`content-pages: HomeLanding must link to ${canonicalPath}`);
+  }
 }
 
 // --- report ---

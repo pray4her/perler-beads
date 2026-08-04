@@ -11,6 +11,7 @@
     "test:run": "vitest run",
     "test:e2e": "playwright test",
     "check:frontend-regressions": "node ./scripts/check-frontend-regressions.mjs && node ./scripts/check-editor-grid-borders.mjs",
+    "capture:tutorial-shots": "node ./scripts/capture-tutorial-screenshots.mjs",
     "pages:deploy": "npm run build && wrangler pages deploy out --project-name perler-beads"
   },
   "engines": {
