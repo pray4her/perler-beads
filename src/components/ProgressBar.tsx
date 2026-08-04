@@ -1,5 +1,6 @@
 import React from 'react';
 import { Progress } from '@/components/ui/progress';
+import { useT } from '@/i18n/context';
 
 interface ProgressBarProps {
   progressPercentage: number;
@@ -13,6 +14,8 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
   recommendedCell,
   hintText
 }) => {
+  const t = useT();
+
   return (
     <div className="h-10 bg-card border-b border-border px-4 py-2 flex items-center justify-between gap-4">
       <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -26,9 +29,9 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
         {hintText ? (
           <span>{hintText}</span>
         ) : recommendedCell ? (
-          <span>下一块 → {recommendedCell.row + 1},{recommendedCell.col + 1}</span>
+          <span>{t.focus.progress.nextCell(recommendedCell.row + 1, recommendedCell.col + 1)}</span>
         ) : (
-          <span>已完成当前颜色</span>
+          <span>{t.focus.progress.colorDone}</span>
         )}
       </div>
     </div>

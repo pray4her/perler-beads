@@ -87,3 +87,15 @@ _Avoid_: 画布, 图案位置
 **图案内容**:
 画布边界内所有非留白格组成的可编辑内容；移动图案内容会改变格子位置，并进入撤销或重做历史。
 _Avoid_: 视口内容, 原图
+
+**双语路由**:
+站点以 /（中文，规范地址）、/zh/（/ 的副本，canonical 指向 /）、/en/（英文）三种路径提供同一工具；专心模式只有 /zh/focus/ 与 /en/focus/，旧 /focus/ 由 Cloudflare Pages _redirects 301 到 /zh/focus/。
+_Avoid_: / 客户端跳转语言选择页, 查询参数切语言
+
+**界面文案字典**:
+所有用户可见文案集中在 src/i18n/dictionaries/<zh|en>/<命名空间>.ts，组件通过 LanguageProvider + useT() 取用；中文为准（zh 定义结构），英文必须与 zh 同构（typeof 校验）。新增文案先加字典再在组件引用，禁止在组件里写硬编码文案。
+_Avoid_: 组件内硬编码字符串, 只加中文不加英文
+
+**规范地址**:
+每个页面的唯一权威 URL（canonical），被搜索引擎收录；副本路径（如 /zh/）通过 canonical 与 hreflang 指向规范地址，不进入 sitemap。
+_Avoid_: 同一内容多个收录地址, 相对 canonical

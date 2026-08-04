@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a Next.js 15, React 19, and TypeScript static PWA. Routes and global styles live in `src/app/`; `page.tsx` is the editor and `focus/page.tsx` is the making workflow. Reusable UI is under `src/components/`, with shadcn-style primitives in `src/components/ui/`. Put stateful logic in `src/hooks/`, pure image and color operations in `src/utils/`, and shared types in `src/types/`. Static assets belong in `public/`, maintenance scripts in `scripts/`, and architecture notes in `docs/`. Color mappings are in `src/app/colorSystemMapping.json` and `色号对应表.csv`.
+This is a Next.js 15, React 19, and TypeScript static PWA. Routes and global styles live in `src/app/`: the root `page.tsx` is the Chinese home (canonical `/`), and `[lang]/` statically generates `/zh/`, `/en/` plus `[lang]/focus/` making workflows. The page implementations are client components `src/components/HomePageClient.tsx` and `src/components/FocusPageClient.tsx`; thin server pages under `src/app/` only wire metadata and `LanguageProvider`. Reusable UI is under `src/components/`, with shadcn-style primitives in `src/components/ui/`. All user-facing copy lives in i18n dictionaries `src/i18n/dictionaries/<zh|en>/<namespace>.ts` (zh defines the shape, en must stay isomorphic via `typeof`); components read it through `useT()` from `src/i18n/context.tsx`. Put stateful logic in `src/hooks/`, pure image and color operations in `src/utils/`, and shared types in `src/types/`. Static assets belong in `public/`, maintenance scripts in `scripts/`, and architecture notes in `docs/`. Color mappings are in `src/app/colorSystemMapping.json` and `色号对应表.csv`.
 
 ## Build, Test, and Development Commands
 
@@ -28,7 +28,7 @@ Follow the dominant Conventional Commit pattern: `feat: add palette search`, `fi
 
 ## Security & Configuration
 
-Do not commit credentials, local Wrangler state, or generated directories such as `.next/` and `out/`. Preserve `trailingSlash: true` compatibility by using `/focus/` for static-export navigation.
+Do not commit credentials, local Wrangler state, or generated directories such as `.next/` and `out/`. Preserve `trailingSlash: true` compatibility for static-export navigation. The canonical origin is `https://perlerbeads.pray4her.xyz` (`src/i18n/site.ts`): `/` is the canonical Chinese home, `/zh/` is its copy (canonical points to `/`), English lives under `/en/`, and focus mode under `/[lang]/focus/`. Never hard-code `/focus/`-style paths — build them with `canonicalFocusPath(lang)` / `canonicalHomePath(lang)`; legacy paths are 301'd in `public/_redirects`. New user-facing copy must go through the i18n dictionaries in both languages.
 
 ## Agent skills
 

@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { useT } from '@/i18n/context';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -45,25 +46,26 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onWakeLockEnabledChange,
   onClose
 }) => {
+  const t = useT();
   const sectionLineColors = [
-    { color: '#007acc', name: '蓝色' },
-    { color: '#28a745', name: '绿色' },
-    { color: '#dc3545', name: '红色' },
-    { color: '#6f42c1', name: '紫色' },
-    { color: '#fd7e14', name: '橙色' },
-    { color: '#6c757d', name: '灰色' }
+    { color: '#007acc', name: t.focus.settings.lineColorBlue },
+    { color: '#28a745', name: t.focus.settings.lineColorGreen },
+    { color: '#dc3545', name: t.focus.settings.lineColorRed },
+    { color: '#6f42c1', name: t.focus.settings.lineColorPurple },
+    { color: '#fd7e14', name: t.focus.settings.lineColorOrange },
+    { color: '#6c757d', name: t.focus.settings.lineColorGray }
   ];
 
   return (
     <Sheet open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent side="right" className="w-80 max-w-[90vw] p-0 gap-0">
         <SheetHeader className="border-b border-border">
-          <SheetTitle>设置</SheetTitle>
+          <SheetTitle>{t.focus.settings.title}</SheetTitle>
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
           <div>
-            <h3 className="text-base font-medium text-foreground mb-3">智能引导</h3>
+            <h3 className="text-base font-medium text-foreground mb-3">{t.focus.settings.guidanceTitle}</h3>
             <div className="space-y-3">
               <label className="flex items-center">
                 <input
@@ -75,8 +77,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   className="mr-3 accent-primary"
                 />
                 <div>
-                  <div className="text-sm font-medium text-foreground">最近优先</div>
-                  <div className="text-xs text-muted-foreground">推荐距离最近的格子</div>
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.guidanceNearest}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.guidanceNearestDesc}</div>
                 </div>
               </label>
 
@@ -90,8 +92,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   className="mr-3 accent-primary"
                 />
                 <div>
-                  <div className="text-sm font-medium text-foreground">大块优先</div>
-                  <div className="text-xs text-muted-foreground">优先推荐大色块区域</div>
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.guidanceLargest}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.guidanceLargestDesc}</div>
                 </div>
               </label>
 
@@ -105,8 +107,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   className="mr-3 accent-primary"
                 />
                 <div>
-                  <div className="text-sm font-medium text-foreground">边缘优先</div>
-                  <div className="text-xs text-muted-foreground">先完成边缘，再填充内部</div>
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.guidanceEdgeFirst}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.guidanceEdgeFirstDesc}</div>
                 </div>
               </label>
             </div>
@@ -115,12 +117,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <Separator />
 
           <div>
-            <h3 className="text-base font-medium text-foreground mb-3">显示设置</h3>
+            <h3 className="text-base font-medium text-foreground mb-3">{t.focus.settings.displayTitle}</h3>
             <div className="space-y-4">
               <label className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm font-medium text-foreground">显示分割线</div>
-                  <div className="text-xs text-muted-foreground">将画布分割成区块帮助定位</div>
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.showSectionLines}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.showSectionLinesDesc}</div>
                 </div>
                 <input
                   type="checkbox"
@@ -134,7 +136,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <>
                   <div>
                     <label className="text-sm font-medium text-foreground block mb-2">
-                      分割间隔
+                      {t.focus.settings.sectionInterval}
                     </label>
                     <div className="flex items-center space-x-3">
                       <input
@@ -146,14 +148,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         className="flex-1 h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
                       />
                       <span className="text-sm font-medium text-foreground min-w-[3rem]">
-                        {gridSectionInterval} 格
+                        {t.focus.settings.sectionIntervalValue(gridSectionInterval)}
                       </span>
                     </div>
                   </div>
 
                   <div>
                     <label className="text-sm font-medium text-foreground block mb-2">
-                      分割线颜色
+                      {t.focus.settings.sectionLineColor}
                     </label>
                     <div className="flex gap-2 flex-wrap">
                       {sectionLineColors.map((colorOption) => (
@@ -176,8 +178,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
               <label className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm font-medium text-foreground">坐标标尺</div>
-                  <div className="text-xs text-muted-foreground">在画布边缘显示行列编号</div>
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.coordinates}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.coordinatesDesc}</div>
                 </div>
                 <input
                   type="checkbox"
@@ -189,8 +191,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
               <label className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm font-medium text-foreground">庆祝动画</div>
-                  <div className="text-xs text-muted-foreground">完成颜色时显示撒花效果</div>
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.celebration}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.celebrationDesc}</div>
                 </div>
                 <input
                   type="checkbox"
@@ -202,8 +204,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
               <label className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm font-medium text-foreground">屏幕常亮</div>
-                  <div className="text-xs text-muted-foreground">制作时防止屏幕自动熄灭</div>
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.wakeLock}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.wakeLockDesc}</div>
                 </div>
                 <input
                   type="checkbox"
@@ -218,13 +220,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <Separator />
 
           <div>
-            <h3 className="text-base font-medium text-foreground mb-3">数据管理</h3>
+            <h3 className="text-base font-medium text-foreground mb-3">{t.focus.settings.dataTitle}</h3>
             <div className="space-y-3">
               <Button variant="outline" className="w-full">
-                导出进度数据
+                {t.focus.settings.exportProgress}
               </Button>
               <Button variant="outline" className="w-full">
-                重置所有进度
+                {t.focus.settings.resetProgress}
               </Button>
             </div>
           </div>
@@ -232,14 +234,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <Separator />
 
           <div>
-            <h3 className="text-base font-medium text-foreground mb-3">关于</h3>
+            <h3 className="text-base font-medium text-foreground mb-3">{t.focus.settings.aboutTitle}</h3>
             <div className="text-sm text-muted-foreground space-y-2">
-              <p>专心拼豆模式 v1.1</p>
-              <p>支持逐色 / 逐行两种推进方式</p>
+              <p>{t.focus.settings.aboutVersion}</p>
+              <p>{t.focus.settings.aboutModes}</p>
               <div className="pt-2 text-xs space-y-1">
-                <p>提示：单指拖动平移，双指缩放查看细节</p>
-                <p>桌面快捷键：空格 暂停/继续 · L 定位 · C 颜色面板</p>
-                <p>逐行模式：↑/↓ 切换当前行 · Esc 关闭面板</p>
+                <p>{t.focus.settings.tipGestures}</p>
+                <p>{t.focus.settings.tipShortcuts}</p>
+                <p>{t.focus.settings.tipRowMode}</p>
               </div>
             </div>
           </div>

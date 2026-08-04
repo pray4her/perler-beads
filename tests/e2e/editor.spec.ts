@@ -4,7 +4,7 @@ import sharp from "sharp";
 
 test("home page has no serious accessibility violations", async ({ page }) => {
   await page.goto("/");
-  await expect(page).toHaveTitle("拼豆底稿生成器");
+  await expect(page).toHaveTitle("拼豆底稿生成器 - 把图片变成能照着拼的拼豆图纸");
   await expect(page.getByRole("heading", { name: "把图片变成能拼的底稿", exact: true })).toBeVisible();
   await expect(page.getByRole("slider", { name: "拖动比较示例原图和拼豆珠板底稿", exact: true })).toBeVisible();
   await expect(page.getByRole("img", { name: "戴着小动物发饰的 Q 版人物示例原图", exact: true })).toBeVisible();

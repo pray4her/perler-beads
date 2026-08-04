@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { getDictionary } from "@/i18n/getDictionary";
+import { languageAlternates, siteUrl } from "@/i18n/site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,28 +15,38 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const zhMeta = getDictionary("zh").metadata;
+
 export const metadata: Metadata = {
-  applicationName: "拼豆底稿生成器",
+  metadataBase: new URL(siteUrl),
+  applicationName: zhMeta.siteName,
   title: {
-    default: "拼豆底稿生成器",
-    template: "%s | 拼豆底稿生成器",
+    default: zhMeta.home.title,
+    template: `%s | ${zhMeta.siteName}`,
   },
-  description: "把图片转换为可编辑、可统计、可照着制作的拼豆底稿。支持常用色号、自定义色板、图纸导出与专心制作，图片仅在本机处理。",
-  keywords: ["拼豆", "拼豆底稿", "像素画", "拼豆图纸", "Perler beads"],
+  description: zhMeta.home.description,
+  keywords: zhMeta.home.keywords,
   category: "工具",
   referrer: "strict-origin-when-cross-origin",
   manifest: "/manifest.json",
+  alternates: {
+    canonical: "/",
+    languages: languageAlternates,
+  },
   openGraph: {
     type: "website",
     locale: "zh_CN",
-    siteName: "拼豆底稿生成器",
-    title: "把图片变成真正能照着拼的底稿",
-    description: "自动匹配常用色号，精修、统计、制作，一次完成。图片仅在本机处理。",
+    siteName: zhMeta.siteName,
+    url: `${siteUrl}/`,
+    title: zhMeta.home.ogTitle,
+    description: zhMeta.home.ogDescription,
+    images: [{ url: "/og-image.png", width: 1200, height: 630 }],
   },
   twitter: {
-    card: "summary",
-    title: "拼豆底稿生成器",
-    description: "把图片转换成可编辑、可制作的拼豆底稿，图片仅在本机处理。",
+    card: "summary_large_image",
+    title: zhMeta.siteName,
+    description: zhMeta.home.ogDescription,
+    images: ["/og-image.png"],
   },
   appleWebApp: {
     capable: true,

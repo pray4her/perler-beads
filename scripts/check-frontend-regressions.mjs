@@ -3,11 +3,12 @@
  * Exit 0 = green, exit 1 = red.
  *
  * Symptoms asserted:
- * 1. Focus navigation must match next.config trailingSlash (avoid /focus 404 on Pages).
+ * 1. Focus navigation must be language-aware via canonicalFocusPath (i18n routes, trailingSlash-safe).
  * 2. Sheet panels must use controlled open={...}, not bare `open` + unmount (scroll-lock / stuck UI).
  * 3. Export actions must share the new controlled export center (not the legacy dialog path).
  * 4. Pointer movement must stay off React state in the pixel editor hot path.
  * 5. Editor tools, bidirectional history, centered resize, and both export surfaces remain wired.
+ * 6. i18n plumbing stays in place (dictionary namespaces, metadataBase, language alternates, 301 redirects).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,23 +21,26 @@ function read(rel) {
   return fs.readFileSync(path.join(root, rel), 'utf8');
 }
 
-// --- 1) trailingSlash vs focus href ---
+// --- 1) trailingSlash vs focus href (i18n: all focus navigation goes through canonicalFocusPath) ---
 const nextConfig = read('next.config.ts');
-const page = read('src/app/page.tsx');
+const homeClient = read('src/components/HomePageClient.tsx');
 const trailingSlashOn = /trailingSlash:\s*true/.test(nextConfig);
-const focusHrefs = [...page.matchAll(/location\.href\s*=\s*(['"`])([^'"`]+)\1/g)].map((m) => m[2]);
-const focusNavs = focusHrefs.filter((h) => h === '/focus' || h.startsWith('/focus'));
 
 if (trailingSlashOn) {
-  for (const href of focusNavs) {
-    if (href === '/focus' || (href.startsWith('/focus') && !href.startsWith('/focus/'))) {
+  for (const [rel, src] of [
+    ['src/components/HomePageClient.tsx', homeClient],
+    ['src/components/PixelEditorWorkspace.tsx', read('src/components/PixelEditorWorkspace.tsx')],
+    ['src/components/FocusPageClient.tsx', read('src/components/FocusPageClient.tsx')],
+  ]) {
+    // Raw hard-coded /focus navigation would bypass the language prefix and 404 on Pages.
+    if (/(?:location\.href\s*=|replaceState\([^)]*)\s*['"`]\/focus[/'"`?]/.test(src)) {
       failures.push(
-        `focus-nav: trailingSlash=true but page navigates to "${href}" (expected "/focus/" to match static export)`,
+        `focus-nav: ${rel} navigates to a hard-coded "/focus..." path; use canonicalFocusPath(lang) from @/i18n/site`,
       );
     }
   }
-  if (focusNavs.length === 0) {
-    failures.push('focus-nav: no location.href focus navigation found in page.tsx');
+  if (!/canonicalFocusPath\(lang\)/.test(homeClient)) {
+    failures.push('focus-nav: HomePageClient must navigate to focus mode via canonicalFocusPath(lang)');
   }
 }
 
@@ -55,24 +59,24 @@ for (const rel of ['src/components/ColorPanel.tsx', 'src/components/SettingsPane
 }
 
 // Focus page should keep panels mounted and pass isOpen / open state (not only conditional mount)
-const focusPage = read('src/app/focus/page.tsx');
+const focusPage = read('src/components/FocusPageClient.tsx');
 if (/\{focusState\.showColorPanel\s*&&\s*\(\s*<ColorPanel/.test(focusPage)) {
   failures.push(
-    'sheet-mount: focus/page.tsx still conditionally mounts ColorPanel; prefer always-mounted open={showColorPanel}',
+    'sheet-mount: FocusPageClient still conditionally mounts ColorPanel; prefer always-mounted open={showColorPanel}',
   );
 }
 if (/\{focusState\.showSettingsPanel\s*&&\s*\(\s*<SettingsPanel/.test(focusPage)) {
   failures.push(
-    'sheet-mount: focus/page.tsx still conditionally mounts SettingsPanel; prefer always-mounted open={showSettingsPanel}',
+    'sheet-mount: FocusPageClient still conditionally mounts SettingsPanel; prefer always-mounted open={showSettingsPanel}',
   );
 }
 
 // --- 2.5) Focus dual progress modes (color / row) ---
 if (!/progressMode:\s*'color'\s*\|\s*'row'/.test(focusPage) || !/focusState\.progressMode === 'row'/.test(focusPage)) {
-  failures.push('focus-modes: focus/page.tsx must keep both color and row progress modes wired');
+  failures.push('focus-modes: FocusPageClient must keep both color and row progress modes wired');
 }
 if (!/<ModeBar/.test(focusPage) || !/<RowStatusBar/.test(focusPage)) {
-  failures.push('focus-modes: ModeBar / RowStatusBar must remain mounted in focus/page.tsx');
+  failures.push('focus-modes: ModeBar / RowStatusBar must remain mounted in FocusPageClient');
 }
 const focusCanvas = read('src/components/FocusCanvas.tsx');
 if (!/progressMode === 'row'/.test(focusCanvas) || !/currentRow/.test(focusCanvas)) {
@@ -106,7 +110,9 @@ if (/strokeRect\(x, y, cellSize, cellSize\)/.test(exportersSrc)) {
 if (!/CHART_SYMBOLS/.test(exportersSrc) || !/symbolByKey/.test(exportersSrc)) {
   failures.push('export-symbol: black-and-white symbol chart style must stay wired into production exports');
 }
-if (!/chartStyle/.test(exportCenter) || !/预览制作底稿/.test(exportCenter)) {
+// 文案已抽入 i18n 字典，预览开关的守卫落在字典与 chartStyle 接线上
+const workspaceDictZh = read('src/i18n/dictionaries/zh/workspace.ts');
+if (!/chartStyle/.test(exportCenter) || !/预览制作底稿/.test(workspaceDictZh)) {
   failures.push('export-center: chart style toggle and pre-export preview must stay in the making section');
 }
 if (!/rasterizePdfText/.test(exportersSrc) || !/drawPdfOverview/.test(exportersSrc) || !/drawPdfFooter/.test(exportersSrc)) {
@@ -116,7 +122,7 @@ if (!/getColorKeyByHex/.test(exportersSrc)) {
   failures.push('export-keys: production sheet must show color-system codes resolved via getColorKeyByHex, not raw HEX palette keys');
 }
 for (const legacy of ['DownloadSettingsModal', 'imageDownloader', 'onDownloadPattern']) {
-  if (exportCenter.includes(legacy) || page.includes(legacy)) {
+  if (exportCenter.includes(legacy) || homeClient.includes(legacy)) {
     failures.push(`export-center: legacy ${legacy} path is still wired`);
   }
 }
@@ -192,6 +198,42 @@ if (!/function drawBlankCell/.test(editor) || !/pixel-editor-empty-hint/.test(ed
 }
 if (!/MINOR_GRID_ZOOM/.test(editor) || !/point\.(?:row|col) % 5/.test(editor)) {
   failures.push('editor-semantic-zoom: minor grid and five-cell guide hierarchy is missing');
+}
+
+// --- 7) i18n plumbing ---
+const rootLayout = read('src/app/layout.tsx');
+if (!/metadataBase:\s*new URL\(siteUrl\)/.test(rootLayout) || !/languages:\s*languageAlternates/.test(rootLayout)) {
+  failures.push('i18n-seo: root layout must keep metadataBase and hreflang language alternates');
+}
+const langLayout = read('src/app/[lang]/layout.tsx');
+if (!/generateStaticParams/.test(langLayout) || !/canonicalHomePath/.test(langLayout)) {
+  failures.push('i18n-routes: [lang] layout must stay statically parameterized with per-language canonical');
+}
+const rootPage = read('src/app/page.tsx');
+if (!/<LanguageProvider lang="zh"/.test(rootPage) || !/<HomePageClient/.test(rootPage)) {
+  failures.push('i18n-routes: root / must render HomePageClient under the zh LanguageProvider');
+}
+for (const ns of ['common', 'metadata', 'landing', 'home', 'workspace', 'focus']) {
+  for (const lang of ['zh', 'en']) {
+    const dict = read(`src/i18n/dictionaries/${lang}/${ns}.ts`);
+    if (/_todo/.test(dict)) {
+      failures.push(`i18n-dict: ${lang}/${ns}.ts still contains the _todo stub`);
+    }
+  }
+}
+// 落地页必须有唯一 h1（SEO 主标题）
+const landing = read('src/components/HomeLanding.tsx');
+const h1Count = (landing.match(/<h1[\s>]|<motion\.h1[\s>]/g) || []).length;
+if (h1Count !== 1) {
+  failures.push(`i18n-seo: HomeLanding must contain exactly one h1 (found ${h1Count})`);
+}
+const redirects = read('public/_redirects');
+if (!/^\/focus\/\s+\/zh\/focus\/\s+301$/m.test(redirects)) {
+  failures.push('i18n-redirects: public/_redirects must 301 the legacy /focus/ path to /zh/focus/');
+}
+const robots = read('public/robots.txt');
+if (!/^Sitemap:\s*https:\/\/perlerbeads\.pray4her\.xyz\/sitemap\.xml$/m.test(robots)) {
+  failures.push('i18n-seo: robots.txt must declare the production sitemap URL');
 }
 
 // --- report ---

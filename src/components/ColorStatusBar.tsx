@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { CheckCheck, Undo2 } from 'lucide-react';
+import { useT } from '@/i18n/context';
 
 interface ColorStatusBarProps {
   currentColor: string;
@@ -21,10 +22,12 @@ const ColorStatusBar: React.FC<ColorStatusBarProps> = ({
   progressPercentage,
   onToggleComplete
 }) => {
+  const t = useT();
+
   if (!colorInfo) {
     return (
       <div className="h-12 bg-card border-b border-border px-4 py-2 flex items-center">
-        <div className="text-muted-foreground">请选择颜色</div>
+        <div className="text-muted-foreground">{t.focus.colorStatus.selectColor}</div>
       </div>
     );
   }
@@ -47,7 +50,7 @@ const ColorStatusBar: React.FC<ColorStatusBarProps> = ({
             {colorInfo.completed}/{colorInfo.total}
           </div>
           <div className="text-xs text-muted-foreground">
-            剩余 {remaining} 颗
+            {t.focus.colorStatus.remaining(remaining)}
           </div>
         </div>
       </div>
@@ -57,19 +60,19 @@ const ColorStatusBar: React.FC<ColorStatusBarProps> = ({
           <Button
             variant={isComplete ? 'outline' : 'default'}
             size="sm"
-            aria-label={isComplete ? '撤销当前颜色的全部标记' : '一键完成当前颜色'}
+            aria-label={isComplete ? t.focus.colorStatus.resetColorLabel : t.focus.colorStatus.finishColorLabel}
             onClick={onToggleComplete}
             className="min-h-11 px-3"
           >
             {isComplete ? (
               <>
                 <Undo2 className="h-4 w-4" />
-                重置该色
+                {t.focus.colorStatus.resetColor}
               </>
             ) : (
               <>
                 <CheckCheck className="h-4 w-4" />
-                完成该色
+                {t.focus.colorStatus.finishColor}
               </>
             )}
           </Button>

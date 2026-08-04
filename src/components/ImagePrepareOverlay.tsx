@@ -26,6 +26,7 @@ import ReactCrop, {
 import "react-image-crop/dist/ReactCrop.css";
 import { transformImageSrc } from "@/utils/cropImage";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n/context";
 
 type AspectPreset = "free" | "1:1" | "4:3" | "3:4";
 
@@ -37,11 +38,11 @@ interface ImagePrepareOverlayProps {
   onComplete: (croppedDataUrl: string) => void;
 }
 
-const ASPECT_PRESETS: { id: AspectPreset; label: string; value?: number }[] = [
-  { id: "free", label: "自由" },
-  { id: "1:1", label: "1:1", value: 1 },
-  { id: "4:3", label: "4:3", value: 4 / 3 },
-  { id: "3:4", label: "3:4", value: 3 / 4 },
+const ASPECT_PRESETS: { id: AspectPreset; value?: number }[] = [
+  { id: "free" },
+  { id: "1:1", value: 1 },
+  { id: "4:3", value: 4 / 3 },
+  { id: "3:4", value: 3 / 4 },
 ];
 
 const EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
@@ -75,6 +76,7 @@ export default function ImagePrepareOverlay({
   onCancel,
   onComplete,
 }: ImagePrepareOverlayProps) {
+  const t = useT();
   const imgRef = useRef<HTMLImageElement>(null);
   const [rotation, setRotation] = useState(0);
   const [flip, setFlip] = useState({ horizontal: false, vertical: false });
@@ -151,7 +153,7 @@ export default function ImagePrepareOverlay({
         setCompletedCrop(null);
       })
       .catch(() => {
-        if (!cancelled) setLocalError("方向变换失败，请重试");
+        if (!cancelled) setLocalError(t.home.imagePrepare.transformFailed);
       })
       .finally(() => {
         if (!cancelled) setIsTransforming(false);
@@ -202,7 +204,7 @@ export default function ImagePrepareOverlay({
             height: image.naturalHeight || image.height,
           } satisfies PixelCrop);
     if (cropToUse.width < 2 || cropToUse.height < 2) {
-      setLocalError("裁剪区域太小，请拖大边框后再试");
+      setLocalError(t.home.imagePrepare.cropTooSmall);
       return;
     }
     setLocalError(null);
@@ -210,7 +212,7 @@ export default function ImagePrepareOverlay({
       const cropped = await cropToImg(image, cropToUse);
       onComplete(cropped);
     } catch (error) {
-      setLocalError(error instanceof Error ? error.message : "整理图片失败，请重试");
+      setLocalError(error instanceof Error ? error.message : t.home.imagePrepare.prepareFailed);
     }
   };
 
@@ -382,10 +384,10 @@ export default function ImagePrepareOverlay({
             className="truncate text-sm font-medium tracking-tight"
             style={{ letterSpacing: "-0.02em" }}
           >
-            整理图片
+            {t.home.imagePrepare.title}
           </p>
           <p className="mt-0.5 text-[12px] text-[#faf9f5]/70">
-            默认已框选全图，可拖动直角或边线调整
+            {t.home.imagePrepare.subtitle}
           </p>
         </div>
         <button
@@ -394,7 +396,7 @@ export default function ImagePrepareOverlay({
           style={{ transitionTimingFunction: EASE }}
           onClick={onCancel}
           disabled={busy}
-          aria-label="取消整理"
+          aria-label={t.home.imagePrepare.cancelAriaLabel}
         >
           <X className="h-5 w-5" />
         </button>
@@ -417,7 +419,7 @@ export default function ImagePrepareOverlay({
           <img
             ref={imgRef}
             src={displaySrc}
-            alt="待整理的原图"
+            alt={t.home.imagePrepare.imageAlt}
             onLoad={handleImageLoad}
             draggable={false}
           />
@@ -429,14 +431,14 @@ export default function ImagePrepareOverlay({
               className="h-9 w-9 animate-spin rounded-full border-2 border-[#faf9f5]/25 border-t-[#faf9f5]"
               aria-hidden="true"
             />
-            <p className="text-sm font-medium tracking-tight">正在生成底稿…</p>
-            <p className="text-[12px] text-[#faf9f5]/55">稍后将直接进入编辑工作台</p>
+            <p className="text-sm font-medium tracking-tight">{t.home.imagePrepare.generating}</p>
+            <p className="text-[12px] text-[#faf9f5]/55">{t.home.imagePrepare.generatingHint}</p>
           </div>
         ) : null}
       </div>
 
       <div className="border-t border-[#faf9f5]/12 bg-[#141413] px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 sm:px-5">
-        <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="裁剪比例">
+        <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label={t.home.imagePrepare.aspectAriaLabel}>
           {ASPECT_PRESETS.map((preset) => {
             const selected = aspectPreset === preset.id;
             return (
@@ -453,18 +455,18 @@ export default function ImagePrepareOverlay({
                 )}
                 style={{ transitionTimingFunction: EASE }}
               >
-                {preset.label}
+                {preset.id === "free" ? t.home.imagePrepare.aspectFree : preset.id}
               </button>
             );
           })}
         </div>
 
-        <div className="mb-1 flex items-start justify-center gap-5 sm:gap-8" role="toolbar" aria-label="图片变换与完成">
+        <div className="mb-1 flex items-start justify-center gap-5 sm:gap-8" role="toolbar" aria-label={t.home.imagePrepare.toolbarAriaLabel}>
           {(
             [
               {
                 key: "rotate",
-                label: "旋转",
+                label: t.home.imagePrepare.rotate,
                 icon: RotateCw,
                 active: false,
                 primary: false,
@@ -472,7 +474,7 @@ export default function ImagePrepareOverlay({
               },
               {
                 key: "flip-h",
-                label: "水平",
+                label: t.home.imagePrepare.flipHorizontal,
                 icon: FlipHorizontal2,
                 active: flip.horizontal,
                 primary: false,
@@ -480,7 +482,7 @@ export default function ImagePrepareOverlay({
               },
               {
                 key: "flip-v",
-                label: "垂直",
+                label: t.home.imagePrepare.flipVertical,
                 icon: FlipVertical2,
                 active: flip.vertical,
                 primary: false,
@@ -488,7 +490,7 @@ export default function ImagePrepareOverlay({
               },
               {
                 key: "reset",
-                label: "重置",
+                label: t.home.imagePrepare.reset,
                 icon: Undo2,
                 active: false,
                 primary: false,
@@ -496,7 +498,7 @@ export default function ImagePrepareOverlay({
               },
               {
                 key: "complete",
-                label: "完成",
+                label: t.home.imagePrepare.complete,
                 icon: Check,
                 active: false,
                 primary: true,

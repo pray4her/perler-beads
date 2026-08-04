@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft, ChevronRight, Palette, Rows3 } from 'lucide-react';
+import { useT } from '@/i18n/context';
 
 interface ModeBarProps {
   progressMode: 'color' | 'row';
@@ -17,11 +18,13 @@ const ModeBar: React.FC<ModeBarProps> = ({
   totalRows,
   onRowChange
 }) => {
+  const t = useT();
+
   return (
     <div className="min-h-11 bg-card border-b border-border px-3 sm:px-5 py-1 flex items-center justify-between gap-2">
       <div
         role="tablist"
-        aria-label="推进方式"
+        aria-label={t.focus.modeBar.label}
         className="inline-flex rounded-lg bg-muted p-0.5"
       >
         <button
@@ -35,7 +38,7 @@ const ModeBar: React.FC<ModeBarProps> = ({
           }`}
         >
           <Palette className="h-4 w-4" />
-          逐色
+          {t.focus.modeBar.byColor}
         </button>
         <button
           role="tab"
@@ -48,7 +51,7 @@ const ModeBar: React.FC<ModeBarProps> = ({
           }`}
         >
           <Rows3 className="h-4 w-4" />
-          逐行
+          {t.focus.modeBar.byRow}
         </button>
       </div>
 
@@ -57,7 +60,7 @@ const ModeBar: React.FC<ModeBarProps> = ({
           <Button
             variant="ghost"
             size="icon"
-            aria-label="上一行"
+            aria-label={t.focus.modeBar.prevRowLabel}
             disabled={currentRow <= 0}
             onClick={() => onRowChange(currentRow - 1)}
             className="h-9 w-9 text-muted-foreground hover:text-foreground"
@@ -70,7 +73,7 @@ const ModeBar: React.FC<ModeBarProps> = ({
           <Button
             variant="ghost"
             size="icon"
-            aria-label="下一行"
+            aria-label={t.focus.modeBar.nextRowLabel}
             disabled={currentRow >= totalRows - 1}
             onClick={() => onRowChange(currentRow + 1)}
             className="h-9 w-9 text-muted-foreground hover:text-foreground"

@@ -8,6 +8,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import { useT } from '@/i18n/context';
 
 interface ColorInfo {
   color: string;
@@ -31,6 +32,7 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
   onColorSelect,
   onClose
 }) => {
+  const t = useT();
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'progress' | 'name' | 'total'>('progress');
 
@@ -66,14 +68,14 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
         </div>
 
         <SheetHeader className="px-4 pb-2">
-          <SheetTitle>选择颜色</SheetTitle>
+          <SheetTitle>{t.focus.colorPanel.title}</SheetTitle>
         </SheetHeader>
 
         <div className="px-4 pb-3">
           <div className="relative">
             <input
               type="text"
-              placeholder="搜索颜色..."
+              placeholder={t.focus.colorPanel.searchPlaceholder}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -95,9 +97,9 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
             onChange={(e) => setSortBy(e.target.value as 'progress' | 'name' | 'total')}
             className="w-full p-2 border border-border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
           >
-            <option value="progress">按进度排序</option>
-            <option value="name">按名称排序</option>
-            <option value="total">按数量排序</option>
+            <option value="progress">{t.focus.colorPanel.sortByProgress}</option>
+            <option value="name">{t.focus.colorPanel.sortByName}</option>
+            <option value="total">{t.focus.colorPanel.sortByTotal}</option>
           </select>
         </div>
 
@@ -162,7 +164,7 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
         <Separator />
         <div className="p-4">
           <Button variant="outline" onClick={onClose} className="w-full">
-            关闭
+            {t.focus.colorPanel.close}
           </Button>
         </div>
       </SheetContent>

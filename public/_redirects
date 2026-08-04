@@ -1,0 +1,3 @@
+# i18n 路由迁移：旧路径 301 到新规范路径（Cloudflare Pages）
+/focus /zh/focus/ 301
+/focus/ /zh/focus/ 301

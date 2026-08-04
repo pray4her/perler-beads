@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { MappedPixel } from '../../utils/pixelation';
+import { MappedPixel } from '@/utils/pixelation';
 import {
   getAllConnectedRegions,
   isRegionCompleted,
@@ -9,19 +9,22 @@ import {
   sortRegionsByDistance,
   sortRegionsBySize,
   getConnectedRegion
-} from '../../utils/floodFillUtils';
-import FocusCanvas from '../../components/FocusCanvas';
-import ColorStatusBar from '../../components/ColorStatusBar';
-import RowStatusBar from '../../components/RowStatusBar';
-import ModeBar from '../../components/ModeBar';
-import ProgressBar from '../../components/ProgressBar';
-import ToolBar from '../../components/ToolBar';
-import ColorPanel from '../../components/ColorPanel';
-import SettingsPanel from '../../components/SettingsPanel';
-import CelebrationAnimation from '../../components/CelebrationAnimation';
-import CompletionCard from '../../components/CompletionCard';
+} from '@/utils/floodFillUtils';
+import FocusCanvas from '@/components/FocusCanvas';
+import ColorStatusBar from '@/components/ColorStatusBar';
+import RowStatusBar from '@/components/RowStatusBar';
+import ModeBar from '@/components/ModeBar';
+import ProgressBar from '@/components/ProgressBar';
+import ToolBar from '@/components/ToolBar';
+import ColorPanel from '@/components/ColorPanel';
+import SettingsPanel from '@/components/SettingsPanel';
+import CelebrationAnimation from '@/components/CelebrationAnimation';
+import CompletionCard from '@/components/CompletionCard';
+import LanguageSwitcher from '@/components/LanguageSwitcher';
+import { useLanguage, useT } from '@/i18n/context';
+import { canonicalFocusPath, canonicalHomePath } from '@/i18n/site';
 import { ArrowLeft, Settings } from 'lucide-react';
-import { getColorKeyByHex, ColorSystem } from '../../utils/colorSystemUtils';
+import { getColorKeyByHex, ColorSystem } from '@/utils/colorSystemUtils';
 import { Button } from '@/components/ui/button';
 import { createEditorDocument, editorDocumentToGrid } from '@/editor/document';
 import { loadFocusProgress, loadProject, saveFocusProgress, saveProject, hashEditorContent } from '@/editor/projectStorage';
@@ -107,7 +110,9 @@ interface FocusModeState {
   showCompletionCard: boolean; // 是否显示完成打卡图
 }
 
-export default function FocusMode() {
+export default function FocusPageClient() {
+  const t = useT();
+  const { lang } = useLanguage();
   // 从localStorage或URL参数获取像素数据
   const [mappedPixelData, setMappedPixelData] = useState<MappedPixel[][] | null>(null);
   const [gridDimensions, setGridDimensions] = useState<{ N: number; M: number } | null>(null);
@@ -283,18 +288,18 @@ export default function FocusMode() {
         const savedColorSystem = (localStorage.getItem('focusMode_selectedColorSystem') || 'MARD') as ColorSystem;
         if (!savedPixelData) throw new Error('No focus project found');
         const pixelData = JSON.parse(savedPixelData) as MappedPixel[][];
-        const migrated = createEditorDocument(pixelData, savedColorSystem, '迁移的拼豆项目');
+        const migrated = createEditorDocument(pixelData, savedColorSystem, t.focus.loading.migratedProjectName);
         await saveProject(migrated);
-        window.history.replaceState(null, '', `/focus/?project=${encodeURIComponent(migrated.id)}`);
+        window.history.replaceState(null, '', `${canonicalFocusPath(lang)}?project=${encodeURIComponent(migrated.id)}`);
         await applyData(pixelData, savedColorSystem, { id: migrated.id, revision: migrated.revision, contentHash: hashEditorContent(migrated) });
       } catch (error) {
         console.error('Failed to load focus mode data:', error);
-        window.location.href = '/';
+        window.location.href = canonicalHomePath(lang);
       }
     };
     void load();
     return () => { cancelled = true; };
-  }, []);
+  }, [lang, t]);
 
   useEffect(() => {
     // 进度加载完成前不保存，避免空进度覆盖已保存进度
@@ -825,7 +830,7 @@ export default function FocusMode() {
         <div className="w-full max-w-sm border border-border rounded-xl bg-card p-6 shadow-[var(--shadow-card)]">
           <div className="h-3 w-28 rounded bg-muted mb-4"></div>
           <div className="h-2 w-full rounded bg-muted"></div>
-          <p className="text-muted-foreground text-sm mt-4">正在载入制作进度</p>
+          <p className="text-muted-foreground text-sm mt-4">{t.focus.loading.progress}</p>
         </div>
       </div>
     );
@@ -842,34 +847,37 @@ export default function FocusMode() {
   const rowPercentage = currentRowTotal > 0 ? Math.round((currentRowCompleted / currentRowTotal) * 100) : 0;
   const displayPercentage = isRowMode ? rowPercentage : progressPercentage;
   const rowHint = currentRowCompleted >= currentRowTotal
-    ? `第 ${focusState.currentRow + 1} 行已完成`
-    : `第 ${focusState.currentRow + 1} 行 · 剩 ${currentRowTotal - currentRowCompleted} 颗`;
+    ? t.focus.progress.rowDone(focusState.currentRow + 1)
+    : t.focus.progress.rowRemaining(focusState.currentRow + 1, currentRowTotal - currentRowCompleted);
 
   return (
     <div className="h-[100dvh] min-h-[100dvh] flex flex-col bg-background">
       <div className="w-full max-w-3xl mx-auto flex flex-col flex-1 min-h-0">
         {/* 顶部导航栏 */}
         <header className="min-h-16 bg-card border-b border-border px-3 sm:px-5 py-2 flex items-center justify-between text-foreground">
-          <Button
-            variant="ghost"
-            onClick={() => {
-              window.location.href = focusProject
-                ? `/?restore=${encodeURIComponent(focusProject.id)}`
-                : '/?restore=latest';
-            }}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            返回
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                window.location.href = focusProject
+                  ? `${canonicalHomePath(lang)}?restore=${encodeURIComponent(focusProject.id)}`
+                  : `${canonicalHomePath(lang)}?restore=latest`;
+              }}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              {t.focus.header.back}
+            </Button>
+            <LanguageSwitcher />
+          </div>
           <div className="text-center">
-            <h1 className="text-base sm:text-lg font-semibold">专心模式</h1>
-            <p className="hidden sm:block text-[11px] text-muted-foreground">逐色 / 逐行完成当前底稿</p>
+            <h1 className="text-base sm:text-lg font-semibold">{t.focus.header.title}</h1>
+            <p className="hidden sm:block text-[11px] text-muted-foreground">{t.focus.header.subtitle}</p>
           </div>
           <Button
             variant="ghost"
             size="icon"
-            aria-label="设置"
+            aria-label={t.focus.header.settingsLabel}
             onClick={() => setFocusState(prev => ({ ...prev, showSettingsPanel: true }))}
             className="text-muted-foreground hover:text-foreground"
           >

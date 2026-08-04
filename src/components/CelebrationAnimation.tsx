@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useT } from '@/i18n/context';
 
 interface CelebrationAnimationProps {
   isVisible: boolean;
@@ -23,6 +24,7 @@ const CelebrationAnimation: React.FC<CelebrationAnimationProps> = ({
   isVisible,
   onComplete
 }) => {
+  const t = useT();
   const [particles, setParticles] = useState<Particle[]>([]);
   const [confetti, setConfetti] = useState<Particle[]>([]);
   // 保持最新的 onComplete，避免父组件回调变化导致动画中途重启
@@ -176,10 +178,10 @@ const CelebrationAnimation: React.FC<CelebrationAnimationProps> = ({
         }}
       >
         <div className="text-4xl font-bold text-yellow-400 drop-shadow-lg animate-pulse">
-          🎉完成🎉
+          {t.focus.celebration.title}
         </div>
         <div className="text-lg text-white drop-shadow-md mt-2">
-          这个颜色拼完了！
+          {t.focus.celebration.subtitle}
         </div>
       </div>
     </div>

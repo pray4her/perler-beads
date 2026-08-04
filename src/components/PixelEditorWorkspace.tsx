@@ -43,6 +43,7 @@ import React, {
 } from "react";
 import ResultPreviewPanel from "@/components/ResultPreviewPanel";
 import FieldHelp from "@/components/FieldHelp";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { countColors, getBoardSummary, type ManufacturingWarning } from "@/editor/analysis";
@@ -95,6 +96,8 @@ import type {
   SelectionMask,
 } from "@/editor/types";
 import { fillInWorker, risksInWorker } from "@/editor/workerClient";
+import { useLanguage, useT } from "@/i18n/context";
+import { canonicalFocusPath } from "@/i18n/site";
 import type { EditorTool, PaletteSortMode, RectangleMode } from "@/types/editorTypes";
 import { getColorKeyByHex, type ColorSystem } from "@/utils/colorSystemUtils";
 import { TRANSPARENT_KEY } from "@/utils/pixelEditingUtils";
@@ -186,21 +189,21 @@ function getViewTransform(camera: Camera, dpr: number) {
   };
 }
 
-const toolDefinitions: Array<{ id: EditorTool; label: string; shortcut: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { id: "move", label: "移动", shortcut: "V", icon: Hand },
-  { id: "brush", label: "画笔", shortcut: "B", icon: Pencil },
-  { id: "eraser", label: "橡皮", shortcut: "E", icon: Eraser },
-  { id: "eyedropper", label: "取色", shortcut: "I", icon: Pipette },
-  { id: "fill", label: "填充", shortcut: "G", icon: PaintBucket },
-  { id: "line", label: "直线", shortcut: "L", icon: Minus },
-  { id: "rectangle", label: "矩形", shortcut: "R", icon: Square },
-  { id: "ellipse", label: "椭圆", shortcut: "O", icon: Circle },
-  { id: "select", label: "选择", shortcut: "S", icon: MousePointer2 },
-  { id: "stamp", label: "图章", shortcut: "T", icon: Stamp },
+const toolDefinitions: Array<{ id: EditorTool; shortcut: string; icon: React.ComponentType<{ className?: string }> }> = [
+  { id: "move", shortcut: "V", icon: Hand },
+  { id: "brush", shortcut: "B", icon: Pencil },
+  { id: "eraser", shortcut: "E", icon: Eraser },
+  { id: "eyedropper", shortcut: "I", icon: Pipette },
+  { id: "fill", shortcut: "G", icon: PaintBucket },
+  { id: "line", shortcut: "L", icon: Minus },
+  { id: "rectangle", shortcut: "R", icon: Square },
+  { id: "ellipse", shortcut: "O", icon: Circle },
+  { id: "select", shortcut: "S", icon: MousePointer2 },
+  { id: "stamp", shortcut: "T", icon: Stamp },
 ];
 
-function toolLabel(tool: EditorTool) {
-  return toolDefinitions.find((item) => item.id === tool)?.label ?? tool;
+function toolLabel(tool: EditorTool, labels: Record<EditorTool, string>) {
+  return labels[tool] ?? tool;
 }
 
 function sortCode(left: EditorPaletteEntry, right: EditorPaletteEntry, system: ColorSystem) {
@@ -243,6 +246,7 @@ function downloadNamedBlob(blob: Blob, name: string) {
 
 /** Stock input that stays responsive locally and commits a single history entry on blur. */
 function InventoryStockInput({ value, onCommit }: { value: number | undefined; onCommit: (next: number) => void }) {
+  const t = useT();
   const [draft, setDraft] = useState(value === undefined ? "" : String(value));
   useEffect(() => setDraft(value === undefined ? "" : String(value)), [value]);
   const commit = () => {
@@ -254,7 +258,7 @@ function InventoryStockInput({ value, onCommit }: { value: number | undefined; o
     <input
       type="number"
       min="0"
-      placeholder="未设置"
+      placeholder={t.workspace.inspector.make.stockPlaceholder}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={commit}
@@ -397,6 +401,11 @@ export default function PixelEditorWorkspace({
   onOpenGenerationParams,
   onOpenCustomPalette,
 }: PixelEditorWorkspaceProps) {
+  const t = useT();
+  const { lang } = useLanguage();
+  const w = t.workspace;
+  const toolLabels = w.tools;
+  const dateTimeLocale = lang === "zh" ? "zh-CN" : "en-US";
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
   const storeRef = useRef<EditorStore | null>(null);
@@ -476,7 +485,7 @@ export default function PixelEditorWorkspace({
   const [projects, setProjects] = useState<EditorProjectSummary[]>([]);
   const [warnings, setWarnings] = useState<ManufacturingWarning[]>([]);
   const [ignoredWarnings, setIgnoredWarnings] = useState<Set<string>>(() => new Set());
-  const [statusMessage, setStatusMessage] = useState("编辑器已就绪");
+  const [statusMessage, setStatusMessage] = useState(w.status.ready);
   const [cameraVersion, setCameraVersion] = useState(0);
   const [namedSnapshot, setNamedSnapshot] = useState("");
 
@@ -516,15 +525,15 @@ export default function PixelEditorWorkspace({
     // Skip no-ops up front: they must neither prompt nor discard redoable history.
     const effective = patches.filter((patch) => patch.before !== patch.after);
     if (effective.length === 0) return;
-    if (snapshot.canRedo && !window.confirm("继续编辑会清除尚未重做的历史。是否继续？")) return;
+    if (snapshot.canRedo && !window.confirm(w.confirms.discardRedo)) return;
     const command: EditorCommand = { label, patches: effective };
     if (selectionAfter !== undefined) {
       command.selectionBefore = selection;
       command.selectionAfter = selectionAfter;
     }
     if (coalesceKey) command.coalesceKey = coalesceKey;
-    if (store.execute(command)) setStatusMessage(`${label} · ${effective.length} 格`);
-  }, [selection, snapshot.canRedo, store]);
+    if (store.execute(command)) setStatusMessage(w.status.cellsChanged(label, effective.length));
+  }, [selection, snapshot.canRedo, store, w]);
 
   const drawEditor = useCallback(() => {
     const current = store.getSnapshot().document;
@@ -1022,12 +1031,12 @@ export default function PixelEditorWorkspace({
     const count = next.mask.reduce((sum, value) => sum + value, 0);
     if (count === 0) {
       setSelection(null);
-      setStatusMessage("选区为空，已清除");
+      setStatusMessage(w.status.selectionEmpty);
     } else {
       setSelection(next);
-      setStatusMessage(`已选择 ${count} 格`);
+      setStatusMessage(w.status.selectedCells(count));
     }
-  }, [selection, selectionMode]);
+  }, [selection, selectionMode, w]);
 
   const applySelectionBounds = useCallback((start: CellPoint, end: CellPoint) => {
     applyCombinedSelection(rectangularSelection(document.width, document.height, normalizeBounds(start, end)));
@@ -1037,7 +1046,7 @@ export default function PixelEditorWorkspace({
   const processPointerMove = useCallback((x: number, y: number, shift: boolean, alt: boolean) => {
     const point = pointFromClient(x, y);
     hoverRef.current = point;
-    if (cursorLabelRef.current) cursorLabelRef.current.textContent = point ? `行 ${point.row + 1} · 列 ${point.col + 1}` : "指针位于画布外";
+    if (cursorLabelRef.current) cursorLabelRef.current.textContent = point ? w.canvasView.cursorPosition(point.row + 1, point.col + 1) : w.canvasView.cursorOutside;
     const gesture = activeGestureRef.current;
     if (!gesture) {
       // Rubber-band feedback while a two-step shape/selection waits for its endpoint.
@@ -1071,7 +1080,7 @@ export default function PixelEditorWorkspace({
       gesture.last = point;
       requestDraw();
     }
-  }, [brushSegment, pointFromClient, requestDraw, selection, shapePoints]);
+  }, [brushSegment, pointFromClient, requestDraw, selection, shapePoints, w]);
 
   const handlePointerDown = async (event: ReactPointerEvent<HTMLCanvasElement>) => {
     event.currentTarget.focus();
@@ -1105,13 +1114,13 @@ export default function PixelEditorWorkspace({
     if (tool === "fill") {
       if (fillInFlightRef.current) return;
       fillInFlightRef.current = true;
-      setStatusMessage("正在分析填充区域…");
+      setStatusMessage(w.status.fillAnalyzing);
       const startRevision = document.revision;
       try {
         const patches = await fillInWorker(document, point.row, point.col, selectedPaletteIndex(), fillMode, fillScope, selection);
         // The document may have changed (edit/undo) while the worker ran; stale patches would corrupt it.
-        if (store.getSnapshot().document.revision !== startRevision) setStatusMessage("填充期间文档已修改，结果已丢弃");
-        else executePatches(fillMode === "all" ? "替换全部同色" : "填充连通区域", patches);
+        if (store.getSnapshot().document.revision !== startRevision) setStatusMessage(w.status.fillDiscarded);
+        else executePatches(fillMode === "all" ? w.historyLabels.replaceAllSameColor : w.historyLabels.fillConnected, patches);
       } finally {
         fillInFlightRef.current = false;
       }
@@ -1128,7 +1137,7 @@ export default function PixelEditorWorkspace({
         const after = stamp.cells[row * stamp.width + col];
         if (after !== document.cells[index]) points.push({ index, before: document.cells[index], after });
       }
-      executePatches(`图章：${stamp.name}`, points);
+      executePatches(w.historyLabels.stampApply(stamp.name), points);
       return;
     }
     const pending = pendingShapeRef.current;
@@ -1179,11 +1188,11 @@ export default function PixelEditorWorkspace({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (!gesture || cancelled || gesture.pan) {
       previewPointsRef.current = [];
-      if (cancelled) setStatusMessage("已取消未完成的操作");
+      if (cancelled) setStatusMessage(w.status.gestureCancelled);
       return requestDraw();
     }
     if (gesture.tool === "brush" || gesture.tool === "eraser") {
-      executePatches(toolLabel(gesture.tool), Array.from(gesture.patches.values()));
+      executePatches(toolLabel(gesture.tool, toolLabels), Array.from(gesture.patches.values()));
     } else if (gesture.moveSelection) {
       if (gesture.moved) {
         // Same command path as nudge: clamps at edges, coalesces, snapshots the selection.
@@ -1191,18 +1200,18 @@ export default function PixelEditorWorkspace({
       } else {
         // Plain click inside the selection: fall back to starting a two-step selection here.
         pendingShapeRef.current = { tool: "select", start: gesture.start };
-        setStatusMessage("选择起点已设置；点击终点或按 Enter 确认");
+        setStatusMessage(w.status.selectStartSet);
       }
     } else if (SHAPE_TOOLS.has(gesture.tool)) {
       if (!gesture.moved && !gesture.fromPending) {
         pendingShapeRef.current = { tool: gesture.tool as ShapeTool, start: gesture.start };
-        setStatusMessage(`${toolLabel(gesture.tool)}起点已设置；点击终点或按 Enter 确认`);
+        setStatusMessage(w.status.shapeStartSet(toolLabel(gesture.tool, toolLabels)));
       } else if (gesture.tool === "select") {
         applySelectionBounds(gesture.start, gesture.last);
         pendingShapeRef.current = null;
       } else {
         const points = shapePoints(gesture.tool as ShapeTool, gesture.start, gesture.last, event.shiftKey, event.altKey);
-        executePatches(toolLabel(gesture.tool), patchesForPoints(document, withSymmetry(points, document.width, document.height, symmetryHorizontal, symmetryVertical, symmetryCol, symmetryRow), selectedPaletteIndex(), selection));
+        executePatches(toolLabel(gesture.tool, toolLabels), patchesForPoints(document, withSymmetry(points, document.width, document.height, symmetryHorizontal, symmetryVertical, symmetryCol, symmetryRow), selectedPaletteIndex(), selection));
         pendingShapeRef.current = null;
       }
     }
@@ -1226,8 +1235,8 @@ export default function PixelEditorWorkspace({
       mask[row * width + col] = 1;
     }
     clipboardRef.current = { width, height, cells, mask };
-    setStatusMessage(`已复制 ${selectionCount} 格`);
-  }, [document, selection, selectionCount]);
+    setStatusMessage(w.status.copiedCells(selectionCount));
+  }, [document, selection, selectionCount, w]);
 
   const pasteSelection = useCallback(() => {
     const clipboard = clipboardRef.current;
@@ -1243,20 +1252,20 @@ export default function PixelEditorWorkspace({
       const after = clipboard.cells[sourceIndex];
       if (after !== document.cells[index]) patches.push({ index, before: document.cells[index], after });
     }
-    executePatches("粘贴选区", patches, rectangularSelection(document.width, document.height, {
+    executePatches(w.historyLabels.pasteSelection, patches, rectangularSelection(document.width, document.height, {
       startRow: activeCell.row,
       startCol: activeCell.col,
       endRow: Math.min(document.height - 1, activeCell.row + clipboard.height - 1),
       endCol: Math.min(document.width - 1, activeCell.col + clipboard.width - 1),
     }));
-  }, [activeCell, document, executePatches]);
+  }, [activeCell, document, executePatches, w]);
 
   const clearSelected = useCallback(() => {
     if (!selection) return;
     const patches: CellPatch[] = [];
     for (let index = 0; index < selection.mask.length; index++) if (selection.mask[index] && document.cells[index]) patches.push({ index, before: document.cells[index], after: 0 });
-    executePatches("删除选区", patches, selection);
-  }, [document, executePatches, selection]);
+    executePatches(w.historyLabels.deleteSelection, patches, selection);
+  }, [document, executePatches, selection, w]);
 
   const cutSelection = useCallback(() => {
     copySelection();
@@ -1269,18 +1278,18 @@ export default function PixelEditorWorkspace({
     const clamped = clampSelectionDelta(selection, rowDelta, colDelta);
     if (!clamped.rowDelta && !clamped.colDelta) return;
     executePatches(
-      copy ? "复制并移动选区" : "移动选区",
+      copy ? w.historyLabels.copyMoveSelection : w.historyLabels.moveSelection,
       moveSelectionPatches(document, selection, clamped.rowDelta, clamped.colDelta, copy),
       translateSelection(selection, clamped.rowDelta, clamped.colDelta),
       "selection-nudge",
     );
-  }, [document, executePatches, selection]);
+  }, [document, executePatches, selection, w]);
 
   const transformSelection = useCallback((transform: "flip-horizontal" | "flip-vertical" | "rotate-90" | "rotate-180") => {
     if (!selection) return;
     const result = transformSelectionDocument(document, selection, transform);
-    executePatches(transform === "flip-horizontal" ? "水平翻转" : transform === "flip-vertical" ? "垂直翻转" : transform === "rotate-90" ? "旋转 90°" : "旋转 180°", result.patches, result.selection);
-  }, [document, executePatches, selection]);
+    executePatches(transform === "flip-horizontal" ? w.historyLabels.flipHorizontal : transform === "flip-vertical" ? w.historyLabels.flipVertical : transform === "rotate-90" ? w.historyLabels.rotate90 : w.historyLabels.rotate180, result.patches, result.selection);
+  }, [document, executePatches, selection, w]);
 
   const createStamp = useCallback(() => {
     if (!selection?.bounds) return;
@@ -1288,10 +1297,10 @@ export default function PixelEditorWorkspace({
     const clipboard = clipboardRef.current;
     if (!clipboard) return;
     const next = cloneEditorDocument(document);
-    next.stamps = [{ id: `stamp-${Date.now()}`, name: `图章 ${next.stamps.length + 1}`, width: clipboard.width, height: clipboard.height, cells: clipboard.cells.slice() }, ...next.stamps].slice(0, 20);
-    executeStructural("创建图章", next);
+    next.stamps = [{ id: `stamp-${Date.now()}`, name: w.historyLabels.stampName(next.stamps.length + 1), width: clipboard.width, height: clipboard.height, cells: clipboard.cells.slice() }, ...next.stamps].slice(0, 20);
+    executeStructural(w.historyLabels.createStamp, next);
     setTool("stamp");
-  }, [copySelection, document, executeStructural, selection?.bounds]);
+  }, [copySelection, document, executeStructural, selection?.bounds, w]);
 
   const handleEditorKeyDown = useCallback((event: KeyboardEvent) => {
     if (isTextInput(event.target)) return;
@@ -1335,7 +1344,7 @@ export default function PixelEditorWorkspace({
       // Abort an in-flight gesture: the pending pointerup finds no gesture and commits nothing.
       activeGestureRef.current = null;
       deselect();
-      setStatusMessage("已取消当前操作");
+      setStatusMessage(w.status.operationCancelled);
       requestDraw();
       return;
     }
@@ -1344,10 +1353,10 @@ export default function PixelEditorWorkspace({
       const pending = pendingShapeRef.current;
       if (pending) {
         if (pending.tool === "select") applySelectionBounds(pending.start, activeCell);
-        else executePatches(toolLabel(pending.tool), patchesForPoints(document, shapePoints(pending.tool, pending.start, activeCell, event.shiftKey, event.altKey), selectedPaletteIndex(), selection));
+        else executePatches(toolLabel(pending.tool, toolLabels), patchesForPoints(document, shapePoints(pending.tool, pending.start, activeCell, event.shiftKey, event.altKey), selectedPaletteIndex(), selection));
         pendingShapeRef.current = null;
       } else {
-        executePatches(tool === "eraser" ? "橡皮" : "键盘绘制", patchesForPoints(document, getBrushPoints(activeCell, brushSize, brushShape), tool === "eraser" ? 0 : selectedPaletteIndex(), selection));
+        executePatches(tool === "eraser" ? w.historyLabels.eraser : w.historyLabels.keyboardPaint, patchesForPoints(document, getBrushPoints(activeCell, brushSize, brushShape), tool === "eraser" ? 0 : selectedPaletteIndex(), selection));
       }
       return;
     }
@@ -1355,7 +1364,7 @@ export default function PixelEditorWorkspace({
       const shortcuts: Record<string, EditorTool> = { v: "move", b: "brush", e: "eraser", i: "eyedropper", g: "fill", l: "line", r: "rectangle", o: "ellipse", s: "select", t: "stamp" };
       if (shortcuts[lower]) { event.preventDefault(); setTool(shortcuts[lower]); }
     }
-  }, [activeCell, applyCombinedSelection, applySelectionBounds, brushShape, brushSize, clearSelected, copySelection, cutSelection, deselect, document, executePatches, invertCurrentSelection, nudgeSelection, pasteSelection, requestDraw, selectedPaletteIndex, selection, shapePoints, shortcutsEnabled, store, tool]);
+  }, [activeCell, applyCombinedSelection, applySelectionBounds, brushShape, brushSize, clearSelected, copySelection, cutSelection, deselect, document, executePatches, invertCurrentSelection, nudgeSelection, pasteSelection, requestDraw, selectedPaletteIndex, selection, shapePoints, shortcutsEnabled, store, tool, toolLabels, w]);
 
   // Shortcuts live on window so they keep working after panel buttons take focus.
   useEffect(() => {
@@ -1379,13 +1388,13 @@ export default function PixelEditorWorkspace({
     await saveProject(document);
     setSaveState("saved");
     setProjects(await listProjects());
-    setStatusMessage("项目已保存到此浏览器");
+    setStatusMessage(w.status.projectSaved);
   };
 
   const enterFocus = async () => {
     await saveNow();
     if (onEnterFocus) onEnterFocus(document.id, document.revision);
-    else window.location.href = `/focus/?project=${encodeURIComponent(document.id)}&revision=${document.revision}`;
+    else window.location.href = `${canonicalFocusPath(lang)}?project=${encodeURIComponent(document.id)}&revision=${document.revision}`;
   };
 
   const visiblePalette = useMemo(() => {
@@ -1410,11 +1419,11 @@ export default function PixelEditorWorkspace({
     if (!file) return;
     try {
       const imported = await importPerlerProject(file);
-      executeStructural(`导入项目：${imported.name}`, imported);
+      executeStructural(w.historyLabels.importProject(imported.name), imported);
       clearSelectionState();
       fitCanvas("canvas");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "项目导入失败");
+      setStatusMessage(error instanceof Error ? error.message : w.status.importFailed);
     }
   };
 
@@ -1423,7 +1432,7 @@ export default function PixelEditorWorkspace({
     if (!source) return;
     const copy = cloneEditorDocument(source);
     copy.id = crypto.randomUUID();
-    copy.name = `${source.name} 副本`;
+    copy.name = w.historyLabels.copySuffix(source.name);
     copy.revision = 0;
     copy.createdAt = copy.updatedAt = Date.now();
     await saveProject(copy);
@@ -1433,7 +1442,7 @@ export default function PixelEditorWorkspace({
   const renameStoredProject = async (projectId: string) => {
     const source = await loadProject(projectId);
     if (!source) return;
-    const name = window.prompt("输入新的项目名称", source.name)?.trim();
+    const name = window.prompt(w.confirms.renamePrompt, source.name)?.trim();
     if (!name || name === source.name) return;
     source.name = name;
     await saveProject(source);
@@ -1460,7 +1469,7 @@ export default function PixelEditorWorkspace({
         const id = entry.color.toUpperCase();
         if (next.has(id)) next.delete(id); else next.add(id);
         return next;
-      })} title={`${code} ${entry.color} · 双击收藏`}>
+      })} title={w.inspector.color.favoriteTitle(code, entry.color)}>
         <span style={{ backgroundColor: entry.color }} />
         <small>{favorites.has(entry.color.toUpperCase()) ? "★ " : ""}{code}</small>
       </button>
@@ -1474,39 +1483,39 @@ export default function PixelEditorWorkspace({
     : 0;
 
   return (
-    <section ref={shellRef} className="pixel-editor-shell" aria-label="拼豆编辑工作台" onBlur={(event) => {
+    <section ref={shellRef} className="pixel-editor-shell" aria-label={w.shell.ariaLabel} onBlur={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget)) {
         spacePressedRef.current = false;
         if (activeGestureRef.current) {
           activeGestureRef.current = null;
           previewPointsRef.current = [];
-          setStatusMessage("窗口失焦，已取消未完成的操作");
+          setStatusMessage(w.status.blurCancelled);
           requestDraw();
         }
       }
     }}>
       <header className="pixel-editor-topbar">
-        <div className="pixel-editor-brand"><span className="pixel-editor-mark" aria-hidden="true" /><div><strong>{document.name}</strong><span>{document.width} × {document.height} 格 · {saveState === "saving" ? "保存中" : saveState === "saved" ? "已保存" : "待恢复"}</span></div></div>
-        <div className="pixel-editor-history" aria-label="编辑历史">
-          <button type="button" onClick={() => store.undo()} disabled={!snapshot.canUndo} title="撤销 Ctrl+Z" aria-label="上一步"><Undo2 className="h-4 w-4" /><span>上一步</span></button>
-          <button type="button" onClick={() => store.redo()} disabled={!snapshot.canRedo} title="重做 Ctrl+Y" aria-label="下一步"><Redo2 className="h-4 w-4" /><span>下一步</span></button>
+        <div className="pixel-editor-brand"><span className="pixel-editor-mark" aria-hidden="true" /><div><strong>{document.name}</strong><span>{w.shell.dimensions(document.width, document.height)} · {saveState === "saving" ? w.shell.saveSaving : saveState === "saved" ? w.shell.saveSaved : w.shell.saveRecovered}</span></div></div>
+        <div className="pixel-editor-history" aria-label={w.topbar.historyAriaLabel}>
+          <button type="button" onClick={() => store.undo()} disabled={!snapshot.canUndo} title={w.topbar.undoTitle} aria-label={w.topbar.undo}><Undo2 className="h-4 w-4" /><span>{w.topbar.undo}</span></button>
+          <button type="button" onClick={() => store.redo()} disabled={!snapshot.canRedo} title={w.topbar.redoTitle} aria-label={w.topbar.redo}><Redo2 className="h-4 w-4" /><span>{w.topbar.redo}</span></button>
         </div>
         <div className="pixel-editor-top-actions">
           {onOpenGenerationParams ? (
-            <button type="button" onClick={onOpenGenerationParams} title="调整生成参数">生成参数</button>
+            <button type="button" onClick={onOpenGenerationParams} title={w.topbar.generationParamsTitle}>{w.topbar.generationParams}</button>
           ) : null}
           {onOpenCustomPalette ? (
-            <button type="button" onClick={onOpenCustomPalette} title="管理色板">色板</button>
+            <button type="button" onClick={onOpenCustomPalette} title={w.topbar.customPaletteTitle}>{w.topbar.customPalette}</button>
           ) : null}
-          <button type="button" onClick={() => void saveNow()}><Save className="h-4 w-4" />保存项目</button>
-          <button type="button" onClick={() => setIsExportOpen(true)}><Download className="h-4 w-4" />导出</button>
-          <button type="button" onClick={() => void enterFocus()}><Focus className="h-4 w-4" />专注制作</button>
-          <Button size="sm" variant="outline" onClick={onExit}>完成</Button>
+          <button type="button" onClick={() => void saveNow()}><Save className="h-4 w-4" />{w.topbar.saveProject}</button>
+          <button type="button" onClick={() => setIsExportOpen(true)}><Download className="h-4 w-4" />{w.topbar.export}</button>
+          <button type="button" onClick={() => void enterFocus()}><Focus className="h-4 w-4" />{w.topbar.enterFocus}</button>
+          <LanguageSwitcher /><Button size="sm" variant="outline" onClick={onExit}>{w.topbar.done}</Button>
         </div>
       </header>
 
       <div className="pixel-editor-layout">
-        <aside className="pixel-editor-tools" role="toolbar" aria-label="画布工具" aria-orientation="vertical" onKeyDown={(event) => {
+        <aside className="pixel-editor-tools" role="toolbar" aria-label={w.toolbar.ariaLabel} aria-orientation="vertical" onKeyDown={(event) => {
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
           // Toolbar owns arrow-key roving; keep it from reaching the window-level editor shortcuts.
           event.stopPropagation();
@@ -1517,19 +1526,19 @@ export default function PixelEditorWorkspace({
         }}>
           {toolDefinitions.map((definition, index) => {
             const Icon = definition.icon;
-            return <button id={`editor-tool-${definition.id}`} key={definition.id} type="button" tabIndex={toolbarIndex === index ? 0 : -1} className={tool === definition.id ? "is-active" : ""} aria-pressed={tool === definition.id} onFocus={() => setToolbarIndex(index)} onClick={() => setTool(definition.id)} title={`${definition.label} (${definition.shortcut})`}><Icon className="h-5 w-5" /><span>{definition.label}</span><kbd>{definition.shortcut}</kbd></button>;
+            return <button id={`editor-tool-${definition.id}`} key={definition.id} type="button" tabIndex={toolbarIndex === index ? 0 : -1} className={tool === definition.id ? "is-active" : ""} aria-pressed={tool === definition.id} onFocus={() => setToolbarIndex(index)} onClick={() => setTool(definition.id)} title={w.toolbar.toolTitle(toolLabels[definition.id], definition.shortcut)}><Icon className="h-5 w-5" /><span>{toolLabels[definition.id]}</span><kbd>{definition.shortcut}</kbd></button>;
           })}
         </aside>
 
         <div className="pixel-editor-canvas-column">
-          <div className="pixel-editor-contextbar" aria-label={`${toolLabel(tool)}选项`}>
-            {(tool === "brush" || tool === "eraser") && <><span>笔头</span>{[1, 2, 3, 5].map((size) => <button key={size} type="button" className={brushSize === size ? "is-active" : ""} onClick={() => setBrushSize(size)}>{size}</button>)}<button type="button" className={brushShape === "square" ? "is-active" : ""} onClick={() => setBrushShape("square")}>方</button><button type="button" className={brushShape === "circle" ? "is-active" : ""} onClick={() => setBrushShape("circle")}>圆</button></>}
-            {(tool === "rectangle" || tool === "ellipse") && <><button type="button" className={rectangleMode === "outline" ? "is-active" : ""} onClick={() => setRectangleMode("outline")}>描边</button><button type="button" className={rectangleMode === "filled" ? "is-active" : ""} onClick={() => setRectangleMode("filled")}>填充</button><span>线宽</span><input aria-label="形状线宽" type="number" min="1" max="8" value={strokeWidth} onChange={(event) => setStrokeWidth(Math.max(1, Math.min(8, Number(event.target.value))))} /></>}
-            {tool === "fill" && <><button type="button" className={fillMode === "connected" ? "is-active" : ""} onClick={() => setFillMode("connected")}>连通区域</button><button type="button" className={fillMode === "all" ? "is-active" : ""} onClick={() => setFillMode("all")}>全部同色</button><button type="button" className={fillScope === "canvas" ? "is-active" : ""} onClick={() => setFillScope("canvas")}>全画布</button><button type="button" className={fillScope === "selection" ? "is-active" : ""} onClick={() => setFillScope("selection")}>选区</button></>}
-            {tool === "select" && (["replace", "add", "subtract", "intersect"] as const).map((mode) => <button key={mode} type="button" className={selectionMode === mode ? "is-active" : ""} onClick={() => setSelectionMode(mode)}>{{ replace: "替换", add: "添加", subtract: "减去", intersect: "交集" }[mode]}</button>)}
+          <div className="pixel-editor-contextbar" aria-label={w.contextbar.optionsAriaLabel(toolLabels[tool])}>
+            {(tool === "brush" || tool === "eraser") && <><span>{w.contextbar.brushTip}</span>{[1, 2, 3, 5].map((size) => <button key={size} type="button" className={brushSize === size ? "is-active" : ""} onClick={() => setBrushSize(size)}>{size}</button>)}<button type="button" className={brushShape === "square" ? "is-active" : ""} onClick={() => setBrushShape("square")}>{w.contextbar.brushSquare}</button><button type="button" className={brushShape === "circle" ? "is-active" : ""} onClick={() => setBrushShape("circle")}>{w.contextbar.brushCircle}</button></>}
+            {(tool === "rectangle" || tool === "ellipse") && <><button type="button" className={rectangleMode === "outline" ? "is-active" : ""} onClick={() => setRectangleMode("outline")}>{w.contextbar.shapeOutline}</button><button type="button" className={rectangleMode === "filled" ? "is-active" : ""} onClick={() => setRectangleMode("filled")}>{w.contextbar.shapeFilled}</button><span>{w.contextbar.strokeWidth}</span><input aria-label={w.contextbar.strokeWidthAriaLabel} type="number" min="1" max="8" value={strokeWidth} onChange={(event) => setStrokeWidth(Math.max(1, Math.min(8, Number(event.target.value))))} /></>}
+            {tool === "fill" && <><button type="button" className={fillMode === "connected" ? "is-active" : ""} onClick={() => setFillMode("connected")}>{w.contextbar.fillConnected}</button><button type="button" className={fillMode === "all" ? "is-active" : ""} onClick={() => setFillMode("all")}>{w.contextbar.fillAll}</button><button type="button" className={fillScope === "canvas" ? "is-active" : ""} onClick={() => setFillScope("canvas")}>{w.contextbar.fillCanvas}</button><button type="button" className={fillScope === "selection" ? "is-active" : ""} onClick={() => setFillScope("selection")}>{w.contextbar.fillSelectionOnly}</button></>}
+            {tool === "select" && (["replace", "add", "subtract", "intersect"] as const).map((mode) => <button key={mode} type="button" className={selectionMode === mode ? "is-active" : ""} onClick={() => setSelectionMode(mode)}>{{ replace: w.contextbar.selectReplace, add: w.contextbar.selectAdd, subtract: w.contextbar.selectSubtract, intersect: w.contextbar.selectIntersect }[mode]}</button>)}
             <span className="contextbar-spacer" />
-            <button type="button" className={symmetryHorizontal ? "is-active" : ""} onClick={() => setSymmetryHorizontal((value) => !value)}>水平对称</button>
-            <button type="button" className={symmetryVertical ? "is-active" : ""} onClick={() => setSymmetryVertical((value) => !value)}>垂直对称</button>
+            <button type="button" className={symmetryHorizontal ? "is-active" : ""} onClick={() => setSymmetryHorizontal((value) => !value)}>{w.contextbar.symmetryHorizontal}</button>
+            <button type="button" className={symmetryVertical ? "is-active" : ""} onClick={() => setSymmetryVertical((value) => !value)}>{w.contextbar.symmetryVertical}</button>
           </div>
           <div ref={viewportRef} className="pixel-editor-viewport" style={{ touchAction: "none" }}>
             <canvas ref={gridCanvasRef} className="pixel-editor-layer pixel-editor-grid-layer" aria-hidden="true" />
@@ -1539,7 +1548,7 @@ export default function PixelEditorWorkspace({
               className="pixel-editor-layer pixel-editor-interaction-layer"
               tabIndex={0}
               role="grid"
-              aria-label="可编辑拼豆网格"
+              aria-label={w.canvasView.gridAriaLabel}
               aria-rowcount={document.height}
               aria-colcount={document.width}
               aria-activedescendant="editor-active-cell"
@@ -1551,9 +1560,9 @@ export default function PixelEditorWorkspace({
               onPointerLeave={() => { hoverRef.current = null; requestDraw(); }}
               style={{ cursor: tool === "move" ? "grab" : tool === "eyedropper" ? "copy" : "crosshair" }}
             />
-            <span id="editor-active-cell" role="gridcell" aria-rowindex={activeCell.row + 1} aria-colindex={activeCell.col + 1} className="sr-only">行 {activeCell.row + 1}，列 {activeCell.col + 1}，{currentEntryIndex ? document.palette[currentEntryIndex]?.key : "空白"}</span>
-            {usage.length === 0 && <div className="pixel-editor-empty-hint" aria-hidden="true"><strong>空白画布</strong><span>选择画笔、填充或图章开始创作</span></div>}
-            <canvas ref={minimapRef} className="pixel-editor-minimap" aria-label="画布导航图" onClick={(event) => {
+            <span id="editor-active-cell" role="gridcell" aria-rowindex={activeCell.row + 1} aria-colindex={activeCell.col + 1} className="sr-only">{w.canvasView.activeCell(activeCell.row + 1, activeCell.col + 1, currentEntryIndex ? document.palette[currentEntryIndex]?.key ?? "" : w.canvasView.blankCell)}</span>
+            {usage.length === 0 && <div className="pixel-editor-empty-hint" aria-hidden="true"><strong>{w.canvasView.emptyTitle}</strong><span>{w.canvasView.emptyHint}</span></div>}
+            <canvas ref={minimapRef} className="pixel-editor-minimap" aria-label={w.canvasView.minimapAriaLabel} onClick={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
               const ratioX = (event.clientX - rect.left) / rect.width;
               const ratioY = (event.clientY - rect.top) / rect.height;
@@ -1564,23 +1573,23 @@ export default function PixelEditorWorkspace({
               setCameraVersion((value) => value + 1);
             }} />
           </div>
-          <div className="pixel-editor-statusbar"><span>{toolLabel(tool)}</span><span ref={cursorLabelRef}>行 {activeCell.row + 1} · 列 {activeCell.col + 1}</span><span>选区 {selectionCount || "—"}</span><span role="status" aria-live="polite">{statusMessage}</span><div className="pixel-editor-zoom"><button type="button" onClick={() => zoomAt(cameraRef.current.zoom / 1.2)} aria-label="缩小"><ZoomOut className="h-4 w-4" /></button><button type="button" onClick={() => zoomAt(cameraRef.current.previousZoom)}>{Math.round(cameraRef.current.zoom * 100)}%</button><button type="button" onClick={() => zoomAt(cameraRef.current.zoom * 1.2)} aria-label="放大"><ZoomIn className="h-4 w-4" /></button></div></div>
-          <span id="pixel-editor-canvas-help" className="sr-only">滚轮缩放画布；方向键移动活动格或选区；Enter 绘制或确认；按住空格拖动画布；Shift 加方向键扩展选择；Control A、X、C、V 管理选区；Control D 取消选择；Control Shift I 反选；选择工具在选区内拖动可移动内容；Escape 取消。</span>
+          <div className="pixel-editor-statusbar"><span>{toolLabels[tool]}</span><span ref={cursorLabelRef}>{w.canvasView.cursorPosition(activeCell.row + 1, activeCell.col + 1)}</span><span>{w.canvasView.selectionCells(selectionCount ? String(selectionCount) : "—")}</span><span role="status" aria-live="polite">{statusMessage}</span><div className="pixel-editor-zoom"><button type="button" onClick={() => zoomAt(cameraRef.current.zoom / 1.2)} aria-label={w.canvasView.zoomOut}><ZoomOut className="h-4 w-4" /></button><button type="button" onClick={() => zoomAt(cameraRef.current.previousZoom)}>{Math.round(cameraRef.current.zoom * 100)}%</button><button type="button" onClick={() => zoomAt(cameraRef.current.zoom * 1.2)} aria-label={w.canvasView.zoomIn}><ZoomIn className="h-4 w-4" /></button></div></div>
+          <span id="pixel-editor-canvas-help" className="sr-only">{w.canvasView.keyboardHelp}</span>
         </div>
 
         <aside className="pixel-editor-inspector">
-          <nav className="pixel-editor-tabs" role="tablist" aria-label="属性面板">{([['color','颜色'],['selection','选择'],['canvas','画布'],['make','制作'],['preview','预览'],['history','历史']] as const).map(([id,label]) => <button key={id} role="tab" type="button" aria-selected={inspectorTab === id} className={inspectorTab === id ? "is-active" : ""} onClick={() => setInspectorTab(id)}>{label}</button>)}</nav>
+          <nav className="pixel-editor-tabs" role="tablist" aria-label={w.inspector.tabsAriaLabel}>{(["color", "selection", "canvas", "make", "preview", "history"] as const).map((id) => <button key={id} role="tab" type="button" aria-selected={inspectorTab === id} className={inspectorTab === id ? "is-active" : ""} onClick={() => setInspectorTab(id)}>{w.inspector.tabs[id]}</button>)}</nav>
           <div className="pixel-editor-inspector-body">
             {inspectorTab === "color" && <div className="editor-inspector-section">
-              <div className="editor-current-color"><span style={{ backgroundColor: selectedColor.color }} /><div><strong>{getColorKeyByHex(selectedColor.color, document.colorSystem)}</strong><small>{selectedColor.color.toUpperCase()} · 前景色</small></div><button type="button" title="交换前景色与背景色" onClick={() => { const foreground = selectedColor; setSelectedColor(backgroundColor); setBackgroundColor(foreground); }}>⇄</button><span style={{ backgroundColor: backgroundColor.color }} title="背景色" /></div>
-              {recentColors.length > 0 && <><small>最近使用</small><div className="editor-palette-grid compact">{recentColors.map((entry) => paletteButton(entry, "recent-"))}</div></>}
-              <div className="editor-segmented"><button type="button" className={paletteSource === "current" ? "is-active" : ""} onClick={() => setPaletteSource("current")}>图案用色</button><button type="button" className={paletteSource === "all" ? "is-active" : ""} onClick={() => setPaletteSource("all")}>完整色板</button></div>
-              <input value={paletteSearch} onChange={(event) => setPaletteSearch(event.target.value)} className="editor-input" placeholder="搜索色号或 HEX" aria-label="搜索颜色" />
-              <div className="editor-field-row"><select className="editor-input" value={paletteSort} onChange={(event) => setPaletteSort(event.target.value as PaletteSortMode)} aria-label="颜色排序"><option value="usage">使用量</option><option value="hue">色相</option><option value="saturation">饱和度</option><option value="lightness">明度</option><option value="code">色号</option><option value="similarity">与前景色相似度</option></select><button type="button" className="editor-sort-direction" onClick={() => setSortAscending((value) => !value)}>{sortAscending ? "升序 ↑" : "降序 ↓"}</button></div>
+              <div className="editor-current-color"><span style={{ backgroundColor: selectedColor.color }} /><div><strong>{getColorKeyByHex(selectedColor.color, document.colorSystem)}</strong><small>{selectedColor.color.toUpperCase()} · {w.inspector.color.foreground}</small></div><button type="button" title={w.inspector.color.swapColorsTitle} onClick={() => { const foreground = selectedColor; setSelectedColor(backgroundColor); setBackgroundColor(foreground); }}>⇄</button><span style={{ backgroundColor: backgroundColor.color }} title={w.inspector.color.backgroundTitle} /></div>
+              {recentColors.length > 0 && <><small>{w.inspector.color.recentColors}</small><div className="editor-palette-grid compact">{recentColors.map((entry) => paletteButton(entry, "recent-"))}</div></>}
+              <div className="editor-segmented"><button type="button" className={paletteSource === "current" ? "is-active" : ""} onClick={() => setPaletteSource("current")}>{w.inspector.color.paletteSourceCurrent}</button><button type="button" className={paletteSource === "all" ? "is-active" : ""} onClick={() => setPaletteSource("all")}>{w.inspector.color.paletteSourceAll}</button></div>
+              <input value={paletteSearch} onChange={(event) => setPaletteSearch(event.target.value)} className="editor-input" placeholder={w.inspector.color.searchPlaceholder} aria-label={w.inspector.color.searchAriaLabel} />
+              <div className="editor-field-row"><select className="editor-input" value={paletteSort} onChange={(event) => setPaletteSort(event.target.value as PaletteSortMode)} aria-label={w.inspector.color.sortAriaLabel}><option value="usage">{w.inspector.color.sortUsage}</option><option value="hue">{w.inspector.color.sortHue}</option><option value="saturation">{w.inspector.color.sortSaturation}</option><option value="lightness">{w.inspector.color.sortLightness}</option><option value="code">{w.inspector.color.sortCode}</option><option value="similarity">{w.inspector.color.sortSimilarity}</option></select><button type="button" className="editor-sort-direction" onClick={() => setSortAscending((value) => !value)}>{sortAscending ? w.inspector.color.sortAscending : w.inspector.color.sortDescending}</button></div>
               <div className="editor-palette-grid">{visiblePalette.map((entry) => paletteButton(entry))}</div>
-              <div><strong>批量替色</strong><p>目标颜色为当前前景色；提交前显示影响范围和库存变化。</p></div>
-              <select className="editor-input" aria-label="要替换的颜色" value={replaceSourceIndex} onChange={(event) => setReplaceSourceIndex(Number(event.target.value))}><option value="0">选择源颜色</option>{usage.map((item) => <option key={item.index} value={item.index}>{item.palette.key} · {item.count} 颗</option>)}</select>
-              <p>{replaceSourceIndex ? `将把${selection ? "选区内" : "全画布"} ${replaceCount} 格替换为 ${getColorKeyByHex(selectedColor.color, document.colorSystem)}；预计需要增加 ${replaceCount} 颗目标色。` : "选择图案中的一种颜色查看影响。"}</p>
+              <div><strong>{w.inspector.color.batchReplaceTitle}</strong><p>{w.inspector.color.batchReplaceDesc}</p></div>
+              <select className="editor-input" aria-label={w.inspector.color.replaceSourceAriaLabel} value={replaceSourceIndex} onChange={(event) => setReplaceSourceIndex(Number(event.target.value))}><option value="0">{w.inspector.color.replaceSourcePlaceholder}</option>{usage.map((item) => <option key={item.index} value={item.index}>{w.inspector.color.replaceSourceOption(item.palette.key, item.count)}</option>)}</select>
+              <p>{replaceSourceIndex ? w.inspector.color.replaceImpact(selection ? w.inspector.color.replaceScopeSelection : w.inspector.color.replaceScopeCanvas, replaceCount, getColorKeyByHex(selectedColor.color, document.colorSystem)) : w.inspector.color.replaceImpactEmpty}</p>
               <Button disabled={!replaceSourceIndex || replaceCount === 0} onClick={() => {
                 const target = selectedPaletteIndex();
                 const patches: CellPatch[] = [];
@@ -1588,64 +1597,64 @@ export default function PixelEditorWorkspace({
                   if (document.cells[index] !== replaceSourceIndex || (selection && !selection.mask[index])) continue;
                   patches.push({ index, before: replaceSourceIndex, after: target });
                 }
-                executePatches("批量替色", patches);
-              }}>替换 {replaceCount} 格</Button>
+                executePatches(w.historyLabels.batchReplace, patches);
+              }}>{w.inspector.color.replaceButton(replaceCount)}</Button>
             </div>}
 
             {inspectorTab === "selection" && <div className="editor-inspector-section">
-              <div><strong>当前选区</strong><p>{selection?.bounds ? `${selectionCount} 格 · ${selection.bounds.endCol - selection.bounds.startCol + 1} × ${selection.bounds.endRow - selection.bounds.startRow + 1}` : "拖拽或点击起点和终点建立选择。"}</p></div>
-              <div className="editor-action-grid"><button type="button" disabled={!selection} onClick={cutSelection}><Scissors className="h-4 w-4" />剪切</button><button type="button" disabled={!selection} onClick={copySelection}><Copy className="h-4 w-4" />原位复制</button><button type="button" disabled={!clipboardRef.current} onClick={pasteSelection}><ClipboardPaste className="h-4 w-4" />粘贴</button><button type="button" disabled={!selection} onClick={clearSelected}><Trash2 className="h-4 w-4" />删除</button><button type="button" disabled={!selection} onClick={() => transformSelection("flip-horizontal")}><FlipHorizontal className="h-4 w-4" />水平翻转</button><button type="button" disabled={!selection} onClick={() => transformSelection("flip-vertical")}><FlipVertical className="h-4 w-4" />垂直翻转</button><button type="button" disabled={!selection} onClick={() => transformSelection("rotate-90")}><RotateCw className="h-4 w-4" />旋转 90°</button><button type="button" disabled={!selection} onClick={createStamp}><Stamp className="h-4 w-4" />创建图章</button></div>
+              <div><strong>{w.inspector.selection.title}</strong><p>{selection?.bounds ? w.inspector.selection.bounds(selectionCount, selection.bounds.endCol - selection.bounds.startCol + 1, selection.bounds.endRow - selection.bounds.startRow + 1) : w.inspector.selection.emptyHint}</p></div>
+              <div className="editor-action-grid"><button type="button" disabled={!selection} onClick={cutSelection}><Scissors className="h-4 w-4" />{w.inspector.selection.cut}</button><button type="button" disabled={!selection} onClick={copySelection}><Copy className="h-4 w-4" />{w.inspector.selection.copy}</button><button type="button" disabled={!clipboardRef.current} onClick={pasteSelection}><ClipboardPaste className="h-4 w-4" />{w.inspector.selection.paste}</button><button type="button" disabled={!selection} onClick={clearSelected}><Trash2 className="h-4 w-4" />{w.inspector.selection.delete}</button><button type="button" disabled={!selection} onClick={() => transformSelection("flip-horizontal")}><FlipHorizontal className="h-4 w-4" />{w.inspector.selection.flipHorizontal}</button><button type="button" disabled={!selection} onClick={() => transformSelection("flip-vertical")}><FlipVertical className="h-4 w-4" />{w.inspector.selection.flipVertical}</button><button type="button" disabled={!selection} onClick={() => transformSelection("rotate-90")}><RotateCw className="h-4 w-4" />{w.inspector.selection.rotate90}</button><button type="button" disabled={!selection} onClick={createStamp}><Stamp className="h-4 w-4" />{w.inspector.selection.createStamp}</button></div>
               <div className="editor-nudge-grid"><span /><button type="button" onClick={() => nudgeSelection(-1,0)}><ArrowUp className="h-4 w-4" /></button><span /><button type="button" onClick={() => nudgeSelection(0,-1)}><ArrowLeft className="h-4 w-4" /></button><button type="button" onClick={() => nudgeSelection(1,0)}><ArrowDown className="h-4 w-4" /></button><button type="button" onClick={() => nudgeSelection(0,1)}><ArrowRight className="h-4 w-4" /></button></div>
-              <div className="editor-action-grid"><button type="button" onClick={invertCurrentSelection}>反选</button><button type="button" onClick={() => setSelection(selectNonTransparent(document.width, document.height, document.cells))}>非透明内容</button><button type="button" onClick={() => setSelection(selectSameColor(document.width, document.height, document.cells, currentEntryIndex))}>相同颜色</button><button type="button" disabled={!lastSelectionRef.current} onClick={() => {
+              <div className="editor-action-grid"><button type="button" onClick={invertCurrentSelection}>{w.inspector.selection.invert}</button><button type="button" onClick={() => setSelection(selectNonTransparent(document.width, document.height, document.cells))}>{w.inspector.selection.selectNonTransparent}</button><button type="button" onClick={() => setSelection(selectSameColor(document.width, document.height, document.cells, currentEntryIndex))}>{w.inspector.selection.selectSameColor}</button><button type="button" disabled={!lastSelectionRef.current} onClick={() => {
                 const last = lastSelectionRef.current;
                 // A mask captured before a document replace has stale dimensions; ignore it.
                 if (!last || last.width !== document.width || last.height !== document.height) return;
                 setSelection(last);
-              }}>重选</button></div>
-              <Button variant="outline" disabled={!selection} onClick={() => { if (!selection?.bounds) return; executeStructural("裁剪到选区", cropEditorDocument(document, selection.bounds)); clearSelectionState(); }}><Crop className="h-4 w-4" />裁剪到选区</Button>
+              }}>{w.inspector.selection.reselect}</button></div>
+              <Button variant="outline" disabled={!selection} onClick={() => { if (!selection?.bounds) return; executeStructural(w.historyLabels.cropToSelection, cropEditorDocument(document, selection.bounds)); clearSelectionState(); }}><Crop className="h-4 w-4" />{w.inspector.selection.cropToSelection}</Button>
             </div>}
 
             {inspectorTab === "canvas" && <div className="editor-inspector-section">
-              <div><strong>视图</strong><p>网格和色号会按缩放自动降低噪声，也可强制显示或隐藏。</p></div>
-              <div className="editor-field-row"><div className="editor-field"><Label>网格</Label><select className="editor-input" value={document.display.gridVisibility} onChange={(event) => updateDocumentSettings("display", { ...document.display, gridVisibility: event.target.value as EditorDocumentV1["display"]["gridVisibility"] }, "调整网格显示")}><option value="auto">自动</option><option value="always">始终</option><option value="hidden">隐藏</option></select></div><div className="editor-field"><Label>色号</Label><select className="editor-input" value={document.display.codeVisibility} onChange={(event) => updateDocumentSettings("display", { ...document.display, codeVisibility: event.target.value as EditorDocumentV1["display"]["codeVisibility"] }, "调整色号显示")}><option value="auto">自动</option><option value="always">始终</option><option value="hidden">隐藏</option></select></div></div>
-              <div className="editor-field"><FieldHelp label="主网格间隔" htmlFor="major-grid">每隔 N 格显示一条加粗主线，把画布划分成小区块，编辑和数格定位时更不容易看花。与下载图纸的「网格线间隔」作用类似。</FieldHelp><input id="major-grid" className="editor-input" type="number" min="1" max="50" value={document.display.majorGridInterval} onChange={(event) => updateDocumentSettings("display", { ...document.display, majorGridInterval: Math.max(1, Number(event.target.value)) }, "调整主网格")}/></div>
-              <div className="editor-action-grid"><button type="button" onClick={() => fitCanvas("canvas")}>适应画布</button><button type="button" disabled={!selection} onClick={() => fitCanvas("selection")}>适应选区</button><button type="button" onClick={() => zoomAt(1)}>100%</button><button type="button" onClick={() => zoomAt(cameraRef.current.previousZoom)}>上次缩放</button></div>
-              <div><strong>画布尺寸</strong><p>九点锚定决定现有内容固定在哪一侧；新增区域保持透明。</p></div>
-              <div className="editor-field-row"><div className="editor-field"><Label htmlFor="canvas-width">宽</Label><input id="canvas-width" className="editor-input" type="number" min="1" max="500" value={resizeWidth} onChange={(event) => setResizeWidth(Number(event.target.value))}/></div><div className="editor-field"><Label htmlFor="canvas-height">高</Label><input id="canvas-height" className="editor-input" type="number" min="1" max="500" value={resizeHeight} onChange={(event) => setResizeHeight(Number(event.target.value))}/></div></div>
-              <div className="editor-anchor-grid">{(["top-left","top","top-right","left","center","right","bottom-left","bottom","bottom-right"] as CanvasAnchor[]).map((anchor) => <button type="button" key={anchor} aria-label={`锚点 ${anchor}`} className={resizeAnchor === anchor ? "is-active" : ""} onClick={() => setResizeAnchor(anchor)} />)}</div>
-              <Button onClick={() => { executeStructural("调整画布尺寸", resizeEditorDocument(document, resizeWidth, resizeHeight, resizeAnchor)); clearSelectionState(); }}>应用尺寸</Button>
-              <Button variant="outline" onClick={() => { executeStructural("裁剪透明边缘", trimTransparent(document)); clearSelectionState(); }}>裁剪透明边缘</Button>
-              <div><strong>对称轴</strong><p>水平轴列 {symmetryCol + 1} · 垂直轴行 {symmetryRow + 1}</p></div>
+              <div><strong>{w.inspector.canvas.viewTitle}</strong><p>{w.inspector.canvas.viewDesc}</p></div>
+              <div className="editor-field-row"><div className="editor-field"><Label>{w.inspector.canvas.grid}</Label><select className="editor-input" value={document.display.gridVisibility} onChange={(event) => updateDocumentSettings("display", { ...document.display, gridVisibility: event.target.value as EditorDocumentV1["display"]["gridVisibility"] }, w.historyLabels.gridVisibility)}><option value="auto">{w.inspector.canvas.visibilityAuto}</option><option value="always">{w.inspector.canvas.visibilityAlways}</option><option value="hidden">{w.inspector.canvas.visibilityHidden}</option></select></div><div className="editor-field"><Label>{w.inspector.canvas.colorCodes}</Label><select className="editor-input" value={document.display.codeVisibility} onChange={(event) => updateDocumentSettings("display", { ...document.display, codeVisibility: event.target.value as EditorDocumentV1["display"]["codeVisibility"] }, w.historyLabels.codeVisibility)}><option value="auto">{w.inspector.canvas.visibilityAuto}</option><option value="always">{w.inspector.canvas.visibilityAlways}</option><option value="hidden">{w.inspector.canvas.visibilityHidden}</option></select></div></div>
+              <div className="editor-field"><FieldHelp label={w.inspector.canvas.majorGridLabel} htmlFor="major-grid">{w.inspector.canvas.majorGridHelp}</FieldHelp><input id="major-grid" className="editor-input" type="number" min="1" max="50" value={document.display.majorGridInterval} onChange={(event) => updateDocumentSettings("display", { ...document.display, majorGridInterval: Math.max(1, Number(event.target.value)) }, w.historyLabels.majorGrid)}/></div>
+              <div className="editor-action-grid"><button type="button" onClick={() => fitCanvas("canvas")}>{w.inspector.canvas.fitCanvas}</button><button type="button" disabled={!selection} onClick={() => fitCanvas("selection")}>{w.inspector.canvas.fitSelection}</button><button type="button" onClick={() => zoomAt(1)}>100%</button><button type="button" onClick={() => zoomAt(cameraRef.current.previousZoom)}>{w.inspector.canvas.lastZoom}</button></div>
+              <div><strong>{w.inspector.canvas.sizeTitle}</strong><p>{w.inspector.canvas.sizeDesc}</p></div>
+              <div className="editor-field-row"><div className="editor-field"><Label htmlFor="canvas-width">{w.inspector.canvas.width}</Label><input id="canvas-width" className="editor-input" type="number" min="1" max="500" value={resizeWidth} onChange={(event) => setResizeWidth(Number(event.target.value))}/></div><div className="editor-field"><Label htmlFor="canvas-height">{w.inspector.canvas.height}</Label><input id="canvas-height" className="editor-input" type="number" min="1" max="500" value={resizeHeight} onChange={(event) => setResizeHeight(Number(event.target.value))}/></div></div>
+              <div className="editor-anchor-grid">{(["top-left","top","top-right","left","center","right","bottom-left","bottom","bottom-right"] as CanvasAnchor[]).map((anchor) => <button type="button" key={anchor} aria-label={w.inspector.canvas.anchorAriaLabel(anchor)} className={resizeAnchor === anchor ? "is-active" : ""} onClick={() => setResizeAnchor(anchor)} />)}</div>
+              <Button onClick={() => { executeStructural(w.historyLabels.resizeCanvas, resizeEditorDocument(document, resizeWidth, resizeHeight, resizeAnchor)); clearSelectionState(); }}>{w.inspector.canvas.applySize}</Button>
+              <Button variant="outline" onClick={() => { executeStructural(w.historyLabels.trimTransparent, trimTransparent(document)); clearSelectionState(); }}>{w.inspector.canvas.trimTransparent}</Button>
+              <div><strong>{w.inspector.canvas.symmetryTitle}</strong><p>{w.inspector.canvas.symmetryInfo(symmetryCol + 1, symmetryRow + 1)}</p></div>
               <div className="editor-field-row"><input className="editor-input" type="number" min="0" max={document.width - 1} step="0.5" value={symmetryCol} onChange={(event) => setSymmetryCol(Number(event.target.value))}/><input className="editor-input" type="number" min="0" max={document.height - 1} step="0.5" value={symmetryRow} onChange={(event) => setSymmetryRow(Number(event.target.value))}/></div>
-              <label className="editor-check"><input type="checkbox" checked={document.display.tiledPreview} onChange={(event) => updateDocumentSettings("display", { ...document.display, tiledPreview: event.target.checked }, event.target.checked ? "开启平铺预览" : "关闭平铺预览")} />平铺预览与环绕绘制</label>
-              <label className="editor-check"><input type="checkbox" checked={shortcutsEnabled} onChange={(event) => setShortcutsEnabled(event.target.checked)} />启用单键工具快捷键</label>
+              <label className="editor-check"><input type="checkbox" checked={document.display.tiledPreview} onChange={(event) => updateDocumentSettings("display", { ...document.display, tiledPreview: event.target.checked }, event.target.checked ? w.historyLabels.tiledPreviewOn : w.historyLabels.tiledPreviewOff)} />{w.inspector.canvas.tiledPreview}</label>
+              <label className="editor-check"><input type="checkbox" checked={shortcutsEnabled} onChange={(event) => setShortcutsEnabled(event.target.checked)} />{w.inspector.canvas.shortcutsToggle}</label>
             </div>}
 
             {inspectorTab === "make" && <div className="editor-inspector-section">
-              <div><strong>拼豆板与尺寸</strong><p>{boardSummary.boardColumns} × {boardSummary.boardRows} 块板 · 约 {(boardSummary.physicalWidthMm / 10).toFixed(1)} × {(boardSummary.physicalHeightMm / 10).toFixed(1)} cm · {boardSummary.total} 颗</p></div>
-              <div className="editor-field-row"><div className="editor-field"><Label>板规格</Label><select className="editor-input" value={document.board.preset} onChange={(event) => { const preset = event.target.value as EditorDocumentV1["board"]["preset"]; const size = preset === "29x29" ? 29 : preset === "14x14" ? 14 : document.board.columns; updateDocumentSettings("board", { ...document.board, preset, columns: size, rows: size }, "调整拼豆板"); }}><option value="29x29">29 × 29</option><option value="14x14">14 × 14</option><option value="custom">自定义</option></select></div><div className="editor-field"><FieldHelp label="间距 mm">相邻两颗豆子的中心距离，只用于把格数换算成成品物理尺寸，不影响格子数量。标准 5mm 小豆（如 Mard、Perler 中豆）填 5；大豆填 10。</FieldHelp><input className="editor-input" type="number" min="1" max="20" step="0.1" value={document.board.pitchMm} onChange={(event) => updateDocumentSettings("board", { ...document.board, pitchMm: Number(event.target.value) }, "调整物理间距")}/></div></div>
-              {document.board.preset === "custom" && <div className="editor-field-row"><input className="editor-input" type="number" min="1" max="100" value={document.board.columns} onChange={(event) => updateDocumentSettings("board", { ...document.board, columns: Number(event.target.value) }, "调整板宽")}/><input className="editor-input" type="number" min="1" max="100" value={document.board.rows} onChange={(event) => updateDocumentSettings("board", { ...document.board, rows: Number(event.target.value) }, "调整板高")}/></div>}
-              <div className="editor-board-list">{boardSummary.boards.map((board) => <span key={board.number}><strong>板 {board.number}</strong><small>第 {board.row + 1} 行 / {board.col + 1} 列 · {board.count} 颗</small></span>)}</div>
-              <div><strong>库存</strong><p>库存按“{document.colorSystem}＋色号”记录，不与其他品牌合并。</p></div>
+              <div><strong>{w.inspector.make.boardTitle}</strong><p>{w.inspector.make.boardSummary(boardSummary.boardColumns, boardSummary.boardRows, (boardSummary.physicalWidthMm / 10).toFixed(1), (boardSummary.physicalHeightMm / 10).toFixed(1), boardSummary.total)}</p></div>
+              <div className="editor-field-row"><div className="editor-field"><Label>{w.inspector.make.boardPreset}</Label><select className="editor-input" value={document.board.preset} onChange={(event) => { const preset = event.target.value as EditorDocumentV1["board"]["preset"]; const size = preset === "29x29" ? 29 : preset === "14x14" ? 14 : document.board.columns; updateDocumentSettings("board", { ...document.board, preset, columns: size, rows: size }, w.historyLabels.boardPreset); }}><option value="29x29">29 × 29</option><option value="14x14">14 × 14</option><option value="custom">{w.inspector.make.boardPresetCustom}</option></select></div><div className="editor-field"><FieldHelp label={w.inspector.make.pitchLabel}>{w.inspector.make.pitchHelp}</FieldHelp><input className="editor-input" type="number" min="1" max="20" step="0.1" value={document.board.pitchMm} onChange={(event) => updateDocumentSettings("board", { ...document.board, pitchMm: Number(event.target.value) }, w.historyLabels.boardPitch)}/></div></div>
+              {document.board.preset === "custom" && <div className="editor-field-row"><input className="editor-input" type="number" min="1" max="100" value={document.board.columns} onChange={(event) => updateDocumentSettings("board", { ...document.board, columns: Number(event.target.value) }, w.historyLabels.boardColumns)}/><input className="editor-input" type="number" min="1" max="100" value={document.board.rows} onChange={(event) => updateDocumentSettings("board", { ...document.board, rows: Number(event.target.value) }, w.historyLabels.boardRows)}/></div>}
+              <div className="editor-board-list">{boardSummary.boards.map((board) => <span key={board.number}><strong>{w.inspector.make.boardItem(board.number)}</strong><small>{w.inspector.make.boardItemInfo(board.row + 1, board.col + 1, board.count)}</small></span>)}</div>
+              <div><strong>{w.inspector.make.inventoryTitle}</strong><p>{w.inspector.make.inventoryDesc(document.colorSystem)}</p></div>
               <div className="editor-inventory-list">{usage.map((item) => {
                 const inventoryKey = `${document.colorSystem}:${item.palette.key}`;
                 const stock = document.inventory[inventoryKey];
-                return <label key={item.index}><span style={{ backgroundColor: item.palette.color }} /><strong>{item.palette.key}</strong><small>需要 {item.count}</small><InventoryStockInput value={stock} onCommit={(next) => updateDocumentSettings("inventory", { ...document.inventory, [inventoryKey]: next }, `更新 ${item.palette.key} 库存`)} />{stock !== undefined && stock < item.count ? <em>缺 {item.count - stock}</em> : <em>充足</em>}</label>;
+                return <label key={item.index}><span style={{ backgroundColor: item.palette.color }} /><strong>{item.palette.key}</strong><small>{w.inspector.make.inventoryNeeded(item.count)}</small><InventoryStockInput value={stock} onCommit={(next) => updateDocumentSettings("inventory", { ...document.inventory, [inventoryKey]: next }, w.historyLabels.updateStock(item.palette.key))} />{stock !== undefined && stock < item.count ? <em>{w.inspector.make.inventoryShortage(item.count - stock)}</em> : <em>{w.inspector.make.inventorySufficient}</em>}</label>;
               })}</div>
-              <div><strong>制作风险</strong><p>{activeWarnings.length ? `发现 ${activeWarnings.length} 项提示；这些提示不会阻止导出。` : "未发现明显的孤立或脆弱结构。"}</p></div>
-              <div className="editor-warning-list">{activeWarnings.slice(0, 8).map((warning) => <button type="button" key={warning.id} onClick={() => { const index = warning.indices[0]; setActiveCell({ row: Math.floor(index / document.width), col: index % document.width }); setIgnoredWarnings((items) => new Set(items).add(warning.id)); }}>{warning.message}<small>定位并忽略</small></button>)}</div>
-              <input ref={projectInputRef} className="sr-only" type="file" accept=".perler,application/x-perler-project" onChange={(event) => void importProjectFile(event.target.files?.[0])}/><Button variant="outline" onClick={() => projectInputRef.current?.click()}>导入 .perler</Button>
-              <div><strong>参考图</strong><p>参考层仅用于对照，不计入用量或产品导出。</p></div>
-              <input ref={referenceInputRef} className="sr-only" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; updateDocumentSettings("reference", { blob: file, fileName: file.name, mimeType: file.type, opacity: .35, mode: "overlay" }, "设置参考图"); }}/><div className="editor-action-grid"><button type="button" onClick={() => referenceInputRef.current?.click()}>选择参考图</button><select className="editor-input" value={document.reference?.mode ?? "hidden"} onChange={(event) => updateDocumentSettings("reference", { ...document.reference, opacity: document.reference?.opacity ?? .35, mode: event.target.value as NonNullable<EditorDocumentV1["reference"]>["mode"] }, "调整参考图模式")}><option value="hidden">隐藏</option><option value="original">原图</option><option value="grid">网格</option><option value="overlay">叠加</option><option value="difference">差异</option></select></div>
-              <div><strong>项目库</strong><p>最近项目保存在当前浏览器中，可打开、复制、重命名或导出。</p></div><div className="editor-project-list">{projects.map((project) => <div key={project.id}><button type="button" onClick={() => void loadProject(project.id).then((loaded) => { if (!loaded) return; executeStructural(`打开项目：${loaded.name}`, loaded); clearSelectionState(); })}><strong>{project.name}</strong><small>{project.width}×{project.height} · {new Date(project.updatedAt).toLocaleString("zh-CN")}</small></button><span className="editor-project-actions"><button type="button" aria-label={`复制 ${project.name}`} onClick={() => void duplicateStoredProject(project.id)}><Copy className="h-4 w-4" /></button><button type="button" aria-label={`重命名 ${project.name}`} onClick={() => void renameStoredProject(project.id)}>改</button><button type="button" aria-label={`导出 ${project.name}`} onClick={() => void exportStoredProject(project.id)}><Download className="h-4 w-4" /></button><button type="button" aria-label={`删除 ${project.name}`} onClick={() => void deleteProject(project.id).then(() => listProjects()).then(setProjects)}><Trash2 className="h-4 w-4" /></button></span></div>)}</div>
+              <div><strong>{w.inspector.make.risksTitle}</strong><p>{activeWarnings.length ? w.inspector.make.risksFound(activeWarnings.length) : w.inspector.make.risksNone}</p></div>
+              <div className="editor-warning-list">{activeWarnings.slice(0, 8).map((warning) => <button type="button" key={warning.id} onClick={() => { const index = warning.indices[0]; setActiveCell({ row: Math.floor(index / document.width), col: index % document.width }); setIgnoredWarnings((items) => new Set(items).add(warning.id)); }}>{warning.message}<small>{w.inspector.make.riskLocateIgnore}</small></button>)}</div>
+              <input ref={projectInputRef} className="sr-only" type="file" accept=".perler,application/x-perler-project" onChange={(event) => void importProjectFile(event.target.files?.[0])}/><Button variant="outline" onClick={() => projectInputRef.current?.click()}>{w.inspector.make.importPerler}</Button>
+              <div><strong>{w.inspector.make.referenceTitle}</strong><p>{w.inspector.make.referenceDesc}</p></div>
+              <input ref={referenceInputRef} className="sr-only" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; updateDocumentSettings("reference", { blob: file, fileName: file.name, mimeType: file.type, opacity: .35, mode: "overlay" }, w.historyLabels.setReference); }}/><div className="editor-action-grid"><button type="button" onClick={() => referenceInputRef.current?.click()}>{w.inspector.make.chooseReference}</button><select className="editor-input" value={document.reference?.mode ?? "hidden"} onChange={(event) => updateDocumentSettings("reference", { ...document.reference, opacity: document.reference?.opacity ?? .35, mode: event.target.value as NonNullable<EditorDocumentV1["reference"]>["mode"] }, w.historyLabels.referenceMode)}><option value="hidden">{w.inspector.make.referenceHidden}</option><option value="original">{w.inspector.make.referenceOriginal}</option><option value="grid">{w.inspector.make.referenceGrid}</option><option value="overlay">{w.inspector.make.referenceOverlay}</option><option value="difference">{w.inspector.make.referenceDifference}</option></select></div>
+              <div><strong>{w.inspector.make.projectsTitle}</strong><p>{w.inspector.make.projectsDesc}</p></div><div className="editor-project-list">{projects.map((project) => <div key={project.id}><button type="button" onClick={() => void loadProject(project.id).then((loaded) => { if (!loaded) return; executeStructural(w.historyLabels.openProject(loaded.name), loaded); clearSelectionState(); })}><strong>{project.name}</strong><small>{w.inspector.make.projectInfo(project.width, project.height, new Date(project.updatedAt).toLocaleString(dateTimeLocale))}</small></button><span className="editor-project-actions"><button type="button" aria-label={w.inspector.make.duplicateAriaLabel(project.name)} onClick={() => void duplicateStoredProject(project.id)}><Copy className="h-4 w-4" /></button><button type="button" aria-label={w.inspector.make.renameAriaLabel(project.name)} onClick={() => void renameStoredProject(project.id)}>{w.inspector.make.renameButton}</button><button type="button" aria-label={w.inspector.make.exportAriaLabel(project.name)} onClick={() => void exportStoredProject(project.id)}><Download className="h-4 w-4" /></button><button type="button" aria-label={w.inspector.make.deleteAriaLabel(project.name)} onClick={() => void deleteProject(project.id).then(() => listProjects()).then(setProjects)}><Trash2 className="h-4 w-4" /></button></span></div>)}</div>
             </div>}
 
-            {inspectorTab === "preview" && <ResultPreviewPanel grid={grid} settings={document.preview} onSettingsChange={(preview) => updateDocumentSettings("preview", preview, "调整展示预览")} />}
+            {inspectorTab === "preview" && <ResultPreviewPanel grid={grid} settings={document.preview} onSettingsChange={(preview) => updateDocumentSettings("preview", preview, w.historyLabels.displayPreview)} />}
 
             {inspectorTab === "history" && <div className="editor-inspector-section">
-              <div><strong>编辑历史</strong><p>共 {snapshot.history.length} 条，当前位置 {snapshot.historyIndex}。点击记录可回到对应状态。</p></div>
-              <div className="editor-history-list"><button type="button" className={snapshot.historyIndex === 0 ? "is-active" : ""} onClick={() => store.rollbackTo(0)}>初始状态</button>{snapshot.history.map((entry, index) => <button key={entry.id} type="button" className={snapshot.historyIndex === index + 1 ? "is-active" : ""} onClick={() => { if (snapshot.historyIndex < snapshot.history.length && index + 1 < snapshot.historyIndex && !window.confirm("回到较早记录后继续编辑会清除未来历史。是否继续？")) return; store.rollbackTo(index + 1); }}><span>{entry.label}</span><small>{entry.affectedCells} 格 · {new Date(entry.timestamp).toLocaleTimeString("zh-CN")}</small></button>)}</div>
-              <div className="editor-field"><Label htmlFor="snapshot-name">命名快照</Label><input id="snapshot-name" className="editor-input" value={namedSnapshot} onChange={(event) => setNamedSnapshot(event.target.value)} placeholder="例如：配色方案 A" /></div><Button variant="outline" onClick={() => void saveNamedSnapshot(document, namedSnapshot).then(() => { setNamedSnapshot(""); setStatusMessage("命名快照已保存"); })}>保存快照</Button>
+              <div><strong>{w.inspector.history.title}</strong><p>{w.inspector.history.summary(snapshot.history.length, snapshot.historyIndex)}</p></div>
+              <div className="editor-history-list"><button type="button" className={snapshot.historyIndex === 0 ? "is-active" : ""} onClick={() => store.rollbackTo(0)}>{w.inspector.history.initial}</button>{snapshot.history.map((entry, index) => <button key={entry.id} type="button" className={snapshot.historyIndex === index + 1 ? "is-active" : ""} onClick={() => { if (snapshot.historyIndex < snapshot.history.length && index + 1 < snapshot.historyIndex && !window.confirm(w.confirms.rollbackDiscard)) return; store.rollbackTo(index + 1); }}><span>{entry.label}</span><small>{w.inspector.history.entryInfo(entry.affectedCells, new Date(entry.timestamp).toLocaleTimeString(dateTimeLocale))}</small></button>)}</div>
+              <div className="editor-field"><Label htmlFor="snapshot-name">{w.inspector.history.snapshotLabel}</Label><input id="snapshot-name" className="editor-input" value={namedSnapshot} onChange={(event) => setNamedSnapshot(event.target.value)} placeholder={w.inspector.history.snapshotPlaceholder} /></div><Button variant="outline" onClick={() => void saveNamedSnapshot(document, namedSnapshot).then(() => { setNamedSnapshot(""); setStatusMessage(w.status.snapshotSaved); })}>{w.inspector.history.saveSnapshot}</Button>
             </div>}
           </div>
         </aside>

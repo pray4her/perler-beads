@@ -39,6 +39,7 @@ import {
 } from "@/editor/exporters";
 import { downloadBlob, exportPerlerProject } from "@/editor/projectArchive";
 import type { EditorDocumentV1 } from "@/editor/types";
+import { useT } from "@/i18n/context";
 import { cn } from "@/lib/utils";
 
 type ExportCenterProps = {
@@ -72,8 +73,8 @@ function useExportCenter(): ExportCenterContextValue {
   return context;
 }
 
-function fileName(document: EditorDocumentV1, suffix: string): string {
-  const base = document.name.replace(/[\\/:*?"<>|]/g, "-").trim() || "拼豆作品";
+function fileName(document: EditorDocumentV1, suffix: string, fallbackBase: string): string {
+  const base = document.name.replace(/[\\/:*?"<>|]/g, "-").trim() || fallbackBase;
   return `${base}-${suffix}`;
 }
 
@@ -85,8 +86,8 @@ function isProductionChartStyle(value: string | undefined): value is ProductionC
   return PRODUCTION_CHART_STYLES.some((style) => style === value);
 }
 
-function exportFailureMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "文件生成失败，请重试";
+function exportFailureMessage(reason: unknown, fallback: string): string {
+  return reason instanceof Error ? reason.message : fallback;
 }
 
 function ExportAction({
@@ -120,6 +121,7 @@ function ExportAction({
 
 function ExportSummary() {
   const { document, model } = useExportCenter();
+  const t = useT();
   const thumbnailSize = 10;
   const thumbnailCells = Array.from({ length: thumbnailSize * thumbnailSize }, (_, index) => {
     const row = Math.min(document.height - 1, Math.floor((Math.floor(index / thumbnailSize) + 0.5) * document.height / thumbnailSize));
@@ -132,14 +134,14 @@ function ExportSummary() {
       <CardHeader className="gap-2 pb-3">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">{document.colorSystem}</Badge>
-          <Badge variant="outline">{document.width} × {document.height} 格</Badge>
-          <Badge variant="outline">{model.boardColumns * model.boardRows} 块板</Badge>
-          <Badge variant="outline">{model.total} 颗</Badge>
-          <Badge variant="outline">{model.colors.length} 种色号</Badge>
+          <Badge variant="outline">{t.workspace.export.cellsBadge(document.width, document.height)}</Badge>
+          <Badge variant="outline">{t.workspace.export.boardsBadge(model.boardColumns * model.boardRows)}</Badge>
+          <Badge variant="outline">{t.workspace.export.beadsBadge(model.total)}</Badge>
+          <Badge variant="outline">{t.workspace.export.colorsBadge(model.colors.length)}</Badge>
         </div>
         <div className="flex items-start gap-3">
           <div
-            aria-label={`作品缩略图：${document.width} × ${document.height} 格`}
+            aria-label={t.workspace.export.thumbnailAriaLabel(document.width, document.height)}
             className="grid size-20 shrink-0 grid-cols-10 overflow-hidden rounded-lg border border-border bg-background shadow-sm"
             role="img"
           >
@@ -148,8 +150,8 @@ function ExportSummary() {
             ))}
           </div>
           <div className="min-w-0 space-y-1">
-            <CardTitle className="text-base">导出当前作品</CardTitle>
-            <CardDescription>展示图使用你在“展示预览”中设置的标题、背景和画面比例。</CardDescription>
+            <CardTitle className="text-base">{t.workspace.export.summaryTitle}</CardTitle>
+            <CardDescription>{t.workspace.export.summaryDesc}</CardDescription>
           </div>
         </div>
       </CardHeader>
@@ -170,6 +172,7 @@ function ExportSummary() {
 
 function ProductionPreview() {
   const { document, paper, chartStyle, canExport } = useExportCenter();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -210,7 +213,7 @@ function ProductionPreview() {
         onClick={() => setOpen((value) => !value)}
       >
         <Eye data-icon="inline-start" />
-        {open ? "收起底稿预览" : "预览制作底稿"}
+        {open ? t.workspace.export.previewHide : t.workspace.export.previewShow}
       </Button>
       {open ? (
         <div className="max-h-80 overflow-auto rounded-lg border border-border bg-background">
@@ -219,12 +222,12 @@ function ProductionPreview() {
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={previewUrl}
-              alt={`制作底稿预览：${document.width} × ${document.height} 格，含色号网格、边缘坐标和用料清单`}
+              alt={t.workspace.export.previewAlt(document.width, document.height)}
               className="w-full"
             />
           ) : (
             <div className="flex h-32 items-center justify-center" role="status">
-              {generating ? <Spinner /> : <span className="text-sm text-muted-foreground">预览生成失败，请重试</span>}
+              {generating ? <Spinner /> : <span className="text-sm text-muted-foreground">{t.workspace.export.previewFailed}</span>}
             </div>
           )}
         </div>
@@ -244,23 +247,24 @@ function MakingExportSection() {
     largePdfAcknowledged,
     acknowledgeLargePdf,
   } = useExportCenter();
+  const t = useT();
   return (
     <Card>
       <CardHeader className="gap-1 pb-3">
-        <CardTitle className="text-base">实际制作</CardTitle>
+        <CardTitle className="text-base">{t.workspace.export.makingTitle}</CardTitle>
         <CardDescription>
-          {model.boardColumns} × {model.boardRows} 块板 · 约 {(model.physicalWidthMm / 10).toFixed(1)} × {(model.physicalHeightMm / 10).toFixed(1)} cm
+          {t.workspace.export.makingDesc(model.boardColumns, model.boardRows, (model.physicalWidthMm / 10).toFixed(1), (model.physicalHeightMm / 10).toFixed(1))}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-medium">纸张大小</span>
+          <span className="text-sm font-medium">{t.workspace.export.paperSize}</span>
           <ToggleGroup
             value={[paper]}
             variant="outline"
             size="lg"
             spacing={0}
-            aria-label="制作底稿纸张大小"
+            aria-label={t.workspace.export.paperAriaLabel}
             onValueChange={(values) => {
               const next = values[0];
               if (isProductionPaper(next)) setPaper(next);
@@ -271,39 +275,39 @@ function MakingExportSection() {
           </ToggleGroup>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-medium">图纸样式</span>
+          <span className="text-sm font-medium">{t.workspace.export.chartStyle}</span>
           <ToggleGroup
             value={[chartStyle]}
             variant="outline"
             size="lg"
             spacing={0}
-            aria-label="制作底稿图纸样式"
+            aria-label={t.workspace.export.chartStyleAriaLabel}
             onValueChange={(values) => {
               const next = values[0];
               if (isProductionChartStyle(next)) setChartStyle(next);
             }}
           >
-            <ToggleGroupItem value="color" className="h-11 px-4">彩色</ToggleGroupItem>
-            <ToggleGroupItem value="symbol" className="h-11 px-4">符号</ToggleGroupItem>
+            <ToggleGroupItem value="color" className="h-11 px-4">{t.workspace.export.chartColor}</ToggleGroupItem>
+            <ToggleGroupItem value="symbol" className="h-11 px-4">{t.workspace.export.chartSymbol}</ToggleGroupItem>
           </ToggleGroup>
         </div>
         <ProductionPreview />
         {pageCount > 64 && !largePdfAcknowledged ? (
           <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-foreground">
-            此底稿将生成 {pageCount} 页 PDF，文件较大。确认后才会开始生成。
+            {t.workspace.export.largePdfWarning(pageCount)}
             <Button variant="outline" className="mt-2 h-11" onClick={acknowledgeLargePdf}>
-              继续生成 {pageCount} 页 PDF
+              {t.workspace.export.largePdfConfirm(pageCount)}
             </Button>
           </div>
         ) : null}
         <ExportAction kind="production-png" variant="default" className="w-full">
-          下载制作底稿图片
+          {t.workspace.export.downloadProductionPng}
         </ExportAction>
         <ExportAction kind="production-pdf" className="w-full">
-          {pageCount > 64 && !largePdfAcknowledged ? "请先确认大文件" : `下载制作底稿 PDF（${paper.toUpperCase()}）`}
+          {pageCount > 64 && !largePdfAcknowledged ? t.workspace.export.confirmLargeFirst : t.workspace.export.downloadProductionPdf(paper.toUpperCase())}
         </ExportAction>
         <p className="text-xs leading-5 text-muted-foreground">
-          底稿包含色号网格、边缘坐标、总颗数和用料清单；符号样式用黑白符号代替填色，适合黑白打印。图片适合在屏幕上对照制作；打印请下载 PDF 并按 100% 比例（不要「适应页面」）。
+          {t.workspace.export.productionNote}
         </p>
       </CardContent>
     </Card>
@@ -312,23 +316,24 @@ function MakingExportSection() {
 
 function ShareExportSection() {
   const { onOpenPreview } = useExportCenter();
+  const t = useT();
   return (
     <Card>
       <CardHeader className="gap-1 pb-3">
-        <CardTitle className="text-base">分享 / 保存作品</CardTitle>
-        <CardDescription>先生成可以直接保存或发送的展示图。</CardDescription>
+        <CardTitle className="text-base">{t.workspace.export.shareTitle}</CardTitle>
+        <CardDescription>{t.workspace.export.shareDesc}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         <ExportAction kind="display-png" variant="default" className="w-full">
-          下载展示图 PNG
+          {t.workspace.export.downloadDisplayPng}
         </ExportAction>
         <div className="grid grid-cols-2 gap-2">
-          <ExportAction kind="display-clipboard" icon={Clipboard}>复制展示图</ExportAction>
-          <ExportAction kind="product-png">下载透明原图 PNG</ExportAction>
+          <ExportAction kind="display-clipboard" icon={Clipboard}>{t.workspace.export.copyDisplay}</ExportAction>
+          <ExportAction kind="product-png">{t.workspace.export.downloadProductPng}</ExportAction>
         </div>
         <Button variant="link" className="w-fit px-0" onClick={onOpenPreview}>
           <PencilLine data-icon="inline-start" />
-          编辑展示样式
+          {t.workspace.export.editDisplayStyle}
         </Button>
       </CardContent>
     </Card>
@@ -336,18 +341,19 @@ function ShareExportSection() {
 }
 
 function BackupExportSection() {
+  const t = useT();
   return (
     <Card>
       <CardHeader className="gap-1 pb-3">
-        <CardTitle className="text-base">备份 / 交换</CardTitle>
-        <CardDescription>备份可继续编辑的项目，或导出可再次导入的色号网格。</CardDescription>
+        <CardTitle className="text-base">{t.workspace.export.backupTitle}</CardTitle>
+        <CardDescription>{t.workspace.export.backupDesc}</CardDescription>
       </CardHeader>
       <CardContent className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <ExportAction kind="project">
-          可编辑项目 .perler
+          {t.workspace.export.exportProject}
         </ExportAction>
         <ExportAction kind="pattern-csv">
-          色号网格 CSV
+          {t.workspace.export.exportCsv}
         </ExportAction>
       </CardContent>
     </Card>
@@ -356,11 +362,13 @@ function BackupExportSection() {
 
 function EmptyExportHint() {
   const { canExport } = useExportCenter();
+  const t = useT();
   if (canExport) return null;
-  return <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-foreground">先添加至少一颗拼豆，再导出作品。</p>;
+  return <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-foreground">{t.workspace.export.emptyHint}</p>;
 }
 
 export function ExportCenter({ document, open, onOpenChange, onOpenPreview }: ExportCenterProps) {
+  const t = useT();
   const [paper, setPaper] = useState<ProductionPaper>("a4");
   const [chartStyle, setChartStyle] = useState<ProductionChartStyle>("color");
   const [activeExport, setActiveExport] = useState<ExportKind | null>(null);
@@ -375,7 +383,7 @@ export function ExportCenter({ document, open, onOpenChange, onOpenPreview }: Ex
   const runExport = useCallback((kind: ExportKind) => {
     if (!canExport || activeExport) return;
     if (kind === "production-pdf" && pageCount > 64 && !largePdfAcknowledged) {
-      setFailure("请先确认大文件，再开始生成 PDF。");
+      setFailure(t.workspace.export.confirmLargeBeforePdf);
       return;
     }
     const execute = async () => {
@@ -385,42 +393,42 @@ export function ExportCenter({ document, open, onOpenChange, onOpenPreview }: Ex
       try {
         switch (kind) {
           case "display-png":
-            downloadBlob(await renderDisplayPng(document), fileName(document, "展示图.png"));
-            setMessage("展示图 PNG 已开始下载");
+            downloadBlob(await renderDisplayPng(document), fileName(document, t.workspace.export.suffixDisplayPng, t.workspace.export.defaultBaseName));
+            setMessage(t.workspace.export.msgDisplayPng);
             break;
           case "display-clipboard":
             await copyDisplayToClipboard(document);
-            setMessage("展示图已复制到剪贴板");
+            setMessage(t.workspace.export.msgCopied);
             break;
           case "product-png":
-            downloadBlob(await renderProductPng(document), fileName(document, "透明原图.png"));
-            setMessage("透明原图 PNG 已开始下载");
+            downloadBlob(await renderProductPng(document), fileName(document, t.workspace.export.suffixProductPng, t.workspace.export.defaultBaseName));
+            setMessage(t.workspace.export.msgProductPng);
             break;
           case "production-png":
-            downloadBlob(await renderProductionPng(document, { paper, chartStyle }), fileName(document, `制作底稿-${paper.toUpperCase()}.png`));
-            setMessage("制作底稿图片已开始下载");
+            downloadBlob(await renderProductionPng(document, { paper, chartStyle }), fileName(document, t.workspace.export.suffixProductionPng(paper.toUpperCase()), t.workspace.export.defaultBaseName));
+            setMessage(t.workspace.export.msgProductionPng);
             break;
           case "production-pdf":
-            downloadBlob(await exportPatternPdf(document, { paper, chartStyle }), fileName(document, `制作底稿-${paper.toUpperCase()}.pdf`));
-            setMessage("制作底稿 PDF 已开始下载");
+            downloadBlob(await exportPatternPdf(document, { paper, chartStyle }), fileName(document, t.workspace.export.suffixProductionPdf(paper.toUpperCase()), t.workspace.export.defaultBaseName));
+            setMessage(t.workspace.export.msgProductionPdf);
             break;
           case "pattern-csv":
-            downloadBlob(createPatternCsv(document), fileName(document, "色号网格.csv"));
-            setMessage("色号网格 CSV 已开始下载");
+            downloadBlob(createPatternCsv(document), fileName(document, t.workspace.export.suffixCsv, t.workspace.export.defaultBaseName));
+            setMessage(t.workspace.export.msgCsv);
             break;
           case "project":
-            downloadBlob(await exportPerlerProject(document), fileName(document, "可编辑项目.perler"));
-            setMessage("可编辑项目已开始下载");
+            downloadBlob(await exportPerlerProject(document), fileName(document, t.workspace.export.suffixProject, t.workspace.export.defaultBaseName));
+            setMessage(t.workspace.export.msgProject);
             break;
         }
       } catch (reason) {
-        setFailure(exportFailureMessage(reason));
+        setFailure(exportFailureMessage(reason, t.workspace.export.genericFailure));
       } finally {
         setActiveExport(null);
       }
     };
     void execute();
-  }, [activeExport, canExport, chartStyle, document, largePdfAcknowledged, pageCount, paper]);
+  }, [activeExport, canExport, chartStyle, document, largePdfAcknowledged, pageCount, paper, t]);
 
   const contextValue = useMemo<ExportCenterContextValue>(() => ({
     document,
@@ -450,14 +458,14 @@ export function ExportCenter({ document, open, onOpenChange, onOpenPreview }: Ex
           className="w-full gap-0 data-[side=right]:w-full sm:data-[side=right]:max-w-lg"
         >
           <SheetHeader className="relative shrink-0 border-b bg-popover pr-14">
-            <SheetTitle>导出作品</SheetTitle>
-            <SheetDescription>所有文件都在当前设备生成；按用途选择所需格式。</SheetDescription>
+            <SheetTitle>{t.workspace.export.title}</SheetTitle>
+            <SheetDescription>{t.workspace.export.description}</SheetDescription>
             <SheetClose
-              aria-label="关闭导出面板"
+              aria-label={t.workspace.export.closeAriaLabel}
               render={<Button variant="ghost" className="absolute top-1/2 right-3 size-11 -translate-y-1/2" />}
             >
               <X />
-              <span className="sr-only">关闭导出面板</span>
+              <span className="sr-only">{t.workspace.export.closeAriaLabel}</span>
             </SheetClose>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto">
