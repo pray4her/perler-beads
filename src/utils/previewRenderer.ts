@@ -105,15 +105,3 @@ export async function canvasToPngBlob(canvas: HTMLCanvasElement) {
   if (!blob) throw new Error("无法生成 PNG 图片");
   return blob;
 }
-
-export async function downloadCanvasPng(canvas: HTMLCanvasElement, filename: string) {
-  const blob = await canvasToPngBlob(canvas);
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.download = filename;
-  link.href = url;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1_000);
-}

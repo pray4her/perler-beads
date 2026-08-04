@@ -1,13 +1,13 @@
 "use client";
 
-import { Download, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { defaultEditorPreviewSettings } from "@/editor/document";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import type { PreviewSettings } from "@/types/editorTypes";
 import type { MappedPixel } from "@/utils/pixelation";
-import { downloadCanvasPng, renderDisplayPreview } from "@/utils/previewRenderer";
+import { renderDisplayPreview } from "@/utils/previewRenderer";
 
 interface ResultPreviewPanelProps {
   grid: MappedPixel[][];
@@ -166,7 +166,6 @@ export default function ResultPreviewPanel({ grid, settings, onSettingsChange }:
 
       <div className="editor-preview-actions">
         <Button variant="outline" onClick={() => onSettingsChange({ ...defaultEditorPreviewSettings })}><RotateCcw className="h-4 w-4" />恢复默认</Button>
-        <Button onClick={() => canvasRef.current && void downloadCanvasPng(canvasRef.current, "perler-display-preview.png")}><Download className="h-4 w-4" />下载展示图</Button>
       </div>
     </div>
   );

@@ -5,7 +5,7 @@
  * Symptoms asserted:
  * 1. Focus navigation must match next.config trailingSlash (avoid /focus 404 on Pages).
  * 2. Sheet panels must use controlled open={...}, not bare `open` + unmount (scroll-lock / stuck UI).
- * 3. Download slider must accept Base UI number | number[] onValueChange (interval must update).
+ * 3. Export actions must share the new controlled export center (not the legacy dialog path).
  * 4. Pointer movement must stay off React state in the pixel editor hot path.
  * 5. Editor tools, bidirectional history, centered resize, and both export surfaces remain wired.
  */
@@ -78,35 +78,47 @@ const focusCanvas = read('src/components/FocusCanvas.tsx');
 if (!/progressMode === 'row'/.test(focusCanvas) || !/currentRow/.test(focusCanvas)) {
   failures.push('focus-modes: FocusCanvas lost the row-mode highlight rendering branch');
 }
+if (!/handleToggleCurrentColorComplete/.test(focusPage) || !/onToggleComplete/.test(focusPage)) {
+  failures.push('focus-complete-color: one-tap complete/reset of the current color must stay wired to ColorStatusBar');
+}
 const projectStorage = read('src/editor/projectStorage.ts');
 if (!/settings\?:\s*FocusProgressSettings/.test(projectStorage) || !/timer\?:\s*\{/.test(projectStorage)) {
   failures.push('focus-persist: FocusProgressRecord must keep optional settings/timer fields (progress + settings + timer persistence)');
 }
 
-// --- 3) Slider onValueChange hardening ---
-const downloadModal = read('src/components/DownloadSettingsModal.tsx');
-const sliderHandler = downloadModal.match(/onValueChange=\{\(([^)]*)\)\s*=>\s*\{([\s\S]*?)\}\s*\}/);
-if (!sliderHandler) {
-  failures.push('slider: DownloadSettingsModal missing onValueChange handler for gridInterval');
-} else {
-  const body = sliderHandler[2];
-  const handlesNumber = /typeof\s+\w+\s*===\s*['"]number['"]/.test(body) || /Number\.isFinite/.test(body);
-  const handlesArray = /Array\.isArray/.test(body);
-  if (!(handlesNumber && handlesArray)) {
-    failures.push(
-      'slider: gridInterval onValueChange must handle both number and number[] (Base UI Value generic)',
-    );
+// --- 3) Export center contract ---
+const exportCenter = read('src/components/ExportCenter.tsx');
+if (!/Sheet\s+open=\{open\}/.test(exportCenter) || !/onOpenChange=\{onOpenChange\}/.test(exportCenter)) {
+  failures.push('export-center: ExportCenter must keep Sheet open state controlled by the workspace');
+}
+for (const kind of ['display-png', 'product-png', 'production-png', 'production-pdf', 'pattern-csv', 'project']) {
+  if (!exportCenter.includes(`"${kind}"`)) {
+    failures.push(`export-center: missing ${kind} export action`);
   }
 }
-
-const sliderUi = read('src/components/ui/slider.tsx');
-if (
-  /const _values = Array\.isArray\(value\)/.test(sliderUi) &&
-  !/typeof value === ['"]number['"]/.test(sliderUi)
-) {
-  failures.push(
-    'slider-ui: ui/slider.tsx does not treat numeric `value` as a single thumb (falls back to [min,max] → two thumbs)',
-  );
+if (!/buildProductionSheetModel/.test(exportCenter) || !/createPatternCsv/.test(exportCenter)) {
+  failures.push('export-center: production and CSV exports must use canonical editor exporters');
+}
+const exportersSrc = read('src/editor/exporters.ts');
+if (/strokeRect\(x, y, cellSize, cellSize\)/.test(exportersSrc)) {
+  failures.push('export-grid: production sheet must not stroke per-cell borders (double shared edges); use collapsed fillRect / pdf.line grid lines');
+}
+if (!/CHART_SYMBOLS/.test(exportersSrc) || !/symbolByKey/.test(exportersSrc)) {
+  failures.push('export-symbol: black-and-white symbol chart style must stay wired into production exports');
+}
+if (!/chartStyle/.test(exportCenter) || !/预览制作底稿/.test(exportCenter)) {
+  failures.push('export-center: chart style toggle and pre-export preview must stay in the making section');
+}
+if (!/rasterizePdfText/.test(exportersSrc) || !/drawPdfOverview/.test(exportersSrc) || !/drawPdfFooter/.test(exportersSrc)) {
+  failures.push('export-pdf: CJK-safe rasterized text, overview page and page footers must stay in PDF export');
+}
+if (!/getColorKeyByHex/.test(exportersSrc)) {
+  failures.push('export-keys: production sheet must show color-system codes resolved via getColorKeyByHex, not raw HEX palette keys');
+}
+for (const legacy of ['DownloadSettingsModal', 'imageDownloader', 'onDownloadPattern']) {
+  if (exportCenter.includes(legacy) || page.includes(legacy)) {
+    failures.push(`export-center: legacy ${legacy} path is still wired`);
+  }
 }
 
 // --- 4) Pixel editor hot path ---
@@ -140,8 +152,8 @@ if (
 ) {
   failures.push('editor-canvas: centered resize or selection crop is not wired');
 }
-if (!/ResultPreviewPanel/.test(editor) || !/onDownloadPattern/.test(editor)) {
-  failures.push('editor-export: display preview and production sheet actions must both remain available');
+if (!/ResultPreviewPanel/.test(editor) || !/ExportCenter/.test(editor) || !/setIsExportOpen\(true\)/.test(editor)) {
+  failures.push('editor-export: display preview and controlled export center must both remain available');
 }
 if (!/touchPointersRef/.test(editor) || !/pinchRef/.test(editor)) {
   failures.push('editor-touch: two-pointer pan and zoom gesture state is not wired');

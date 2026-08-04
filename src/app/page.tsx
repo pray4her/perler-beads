@@ -19,10 +19,7 @@ import {
   findClosestPaletteColor
 } from '../utils/pixelation';
 
-// 导入新的类型和组件
-import { GridDownloadOptions } from '../types/downloadTypes';
-import DownloadSettingsModal, { gridLineColorOptions } from '../components/DownloadSettingsModal';
-import { downloadImage, importCsvData } from '../utils/imageDownloader';
+import { parsePatternCsv } from "@/editor/patternCsv";
 
 import { 
   getColorKeyByHex,
@@ -53,12 +50,35 @@ const fullBeadPalette: PaletteColor[] = Object.entries(mardToHexMapping)
 import GridTooltip from '../components/GridTooltip';
 import CustomPaletteEditor from '../components/CustomPaletteEditor';
 import { loadPaletteSelections, savePaletteSelections, presetToSelections, PaletteSelections } from '../utils/localStorageUtils';
-import { TRANSPARENT_KEY, transparentColorData } from '../utils/pixelEditingUtils';
 import { recalculateColorStats } from '../utils/pixelEditingUtils';
+import {
+  removeExternalBackground,
+  type BackgroundRemovalUnchangedReason,
+} from "@/utils/backgroundRemoval";
 import PixelEditorWorkspace from '../components/PixelEditorWorkspace';
 import { createEditorDocument, editorDocumentToGrid } from '@/editor/document';
 import { listProjects, loadProject } from '@/editor/projectStorage';
 import type { EditorCommitResult } from '@/editor/types';
+
+type EditSnapshot = {
+  readonly mappedPixelData: MappedPixel[][];
+  readonly colorCounts: Record<string, { readonly count: number; readonly color: string }>;
+  readonly totalBeadCount: number;
+};
+
+type ToastNotice = {
+  readonly message: string;
+  readonly action: "undo-background" | null;
+};
+
+const beadCountFormatter = new Intl.NumberFormat("zh-CN");
+
+const backgroundRemovalFailureMessages: Readonly<Record<BackgroundRemovalUnchangedReason, string>> = {
+  "empty-grid": "当前底稿为空，无法清理背景",
+  "no-candidate": "边缘没有可识别的背景区域",
+  "low-confidence": "背景边缘不够一致，未执行清理",
+  "excessive-removal": "为避免误删主体，未执行清理",
+};
 
 export default function Home() {
   const [originalImageSrc, setOriginalImageSrc] = useState<string | null>(null);
@@ -69,6 +89,7 @@ export default function Home() {
   const [editorMountId, setEditorMountId] = useState(0);
   const [isGenerationSheetOpen, setIsGenerationSheetOpen] = useState(false);
   const pendingEditorRemountRef = useRef(false);
+  const automaticBackgroundCleanupEnabledRef = useRef(false);
   const [granularity, setGranularity] = useState<number>(DEFAULT_GRANULARITY);
   const [granularityInput, setGranularityInput] = useState<string>(String(DEFAULT_GRANULARITY));
   const [similarityThreshold, setSimilarityThreshold] = useState<number>(DEFAULT_SIMILARITY_THRESHOLD);
@@ -97,45 +118,28 @@ export default function Home() {
   const [isCustomPaletteEditorOpen, setIsCustomPaletteEditorOpen] = useState<boolean>(false);
   const [, setIsCustomPalette] = useState<boolean>(false);
   
-  // ++ 新增：下载设置相关状态 ++
-  const [isDownloadSettingsOpen, setIsDownloadSettingsOpen] = useState<boolean>(false);
-  const [downloadOptions, setDownloadOptions] = useState<GridDownloadOptions>({
-    showGrid: true,
-    gridInterval: 10,
-    showCoordinates: true,
-    showCellNumbers: true,
-    gridLineColor: gridLineColorOptions[0].value,
-    includeStats: true, // 默认包含统计信息
-    exportCsv: false // 默认不导出CSV
-  });
-
   // 新增：组件挂载状态
   const [isMounted, setIsMounted] = useState<boolean>(false);
 
   // 新增：编辑撤回历史栈（多步）
-  interface EditSnapshot {
-    mappedPixelData: MappedPixel[][];
-    colorCounts: { [key: string]: { count: number; color: string } };
-    totalBeadCount: number;
-  }
   const [, setEditHistory] = useState<EditSnapshot[]>([]);
 
   // 新增：一键去背景撤回快照（单步）
   const [bgRemovalSnapshot, setBgRemovalSnapshot] = useState<EditSnapshot | null>(null);
 
   // 新增：轻量提示
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastNotice, setToastNotice] = useState<ToastNotice | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showToast = useCallback((msg: string) => {
+  const showToast = useCallback((message: string, action: ToastNotice["action"] = null) => {
     // 清除上一次未完成的定时器，避免新提示被旧定时器提前关掉
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
     }
-    setToastMessage(msg);
+    setToastNotice({ message, action });
     toastTimerRef.current = setTimeout(() => {
       toastTimerRef.current = null;
-      setToastMessage(null);
-    }, 2000);
+      setToastNotice(null);
+    }, action ? 6_000 : 2_500);
   }, []);
 
   // 卸载时清理 toast 定时器
@@ -160,7 +164,7 @@ export default function Home() {
     if (isManualColoringMode) {
       setEditorMountId((value) => value + 1);
     }
-    showToast('已撤回背景去除');
+    showToast('已撤回背景清理');
   }, [bgRemovalSnapshot, isManualColoringMode, showToast]);
 
   // 清空编辑历史（参数变化、退出编辑模式等时调用）
@@ -189,7 +193,6 @@ export default function Home() {
 
   // activeBeadPalette 规则（唯一来源）：仅按自定义色板选择和排除列表过滤 fullBeadPalette，
   // key 保持为 hex 值，不做色号系统转换 —— 像素化匹配只依赖 rgb/hex，
-  // 而展示用的色号由各消费处（currentGridColors / fullPaletteColors / downloadImage 等）
   // 通过 getColorKeyByHex(hex, selectedColorSystem) 按需转换。
   const activeBeadPalette = useMemo(() => {
     return fullBeadPalette.filter(color => {
@@ -328,6 +331,7 @@ export default function Home() {
   }, [isMounted]);
 
   const loadExampleImage = useCallback(() => {
+    automaticBackgroundCleanupEnabledRef.current = false;
     setPrepareImageSrc(null);
     setIsPrepareSubmitting(false);
     setPrepareSubmitError(null);
@@ -417,6 +421,7 @@ export default function Home() {
   };
 
   const applyConfirmedImageSrc = (result: string) => {
+    automaticBackgroundCleanupEnabledRef.current = true;
     setOriginalImageSrc(result);
     setMappedPixelData(null);
     setGridDimensions(null);
@@ -435,37 +440,25 @@ export default function Home() {
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
 
     if (fileExtension === 'csv') {
+      automaticBackgroundCleanupEnabledRef.current = false;
       console.log('正在导入CSV文件...');
-      importCsvData(file)
-        .then(({ mappedPixelData, gridDimensions }) => {
+      void file.text()
+        .then((source) => parsePatternCsv(source))
+        .then((result) => {
+          if (result.kind === "error") {
+            alert(`CSV导入失败：${result.message}`);
+            return;
+          }
+          const { mappedPixelData, gridDimensions } = result;
           console.log(`成功导入CSV文件: ${gridDimensions.N}x${gridDimensions.M}`);
 
           setMappedPixelData(mappedPixelData);
           setGridDimensions(gridDimensions);
-
-          const colorCountsMap: { [key: string]: { count: number; color: string } } = {};
-          let totalCount = 0;
-
-          mappedPixelData.forEach(row => {
-            row.forEach(cell => {
-              if (cell && !cell.isExternal) {
-                const colorKey = cell.color.toUpperCase();
-                if (colorCountsMap[colorKey]) {
-                  colorCountsMap[colorKey].count++;
-                } else {
-                  colorCountsMap[colorKey] = {
-                    count: 1,
-                    color: cell.color
-                  };
-                }
-                totalCount++;
-              }
-            });
-          });
-
-          setColorCounts(colorCountsMap);
-          setTotalBeadCount(totalCount);
-          setInitialGridColorKeys(new Set(Object.keys(colorCountsMap)));
+          const stats = recalculateColorStats(mappedPixelData);
+          setColorCounts(stats.colorCounts);
+          setTotalBeadCount(stats.totalCount);
+          setInitialGridColorKeys(new Set(Object.keys(stats.colorCounts)));
+          if (result.colorSystem) setSelectedColorSystem(result.colorSystem);
 
           const syntheticImageSrc = generateSyntheticImageFromPixelData(mappedPixelData, gridDimensions);
           setOriginalImageSrc(syntheticImageSrc);
@@ -476,11 +469,13 @@ export default function Home() {
           setGranularityInput(gridDimensions.N.toString());
           setEditorMountId((value) => value + 1);
           setIsManualColoringMode(true);
-          alert(`成功导入CSV文件！图纸尺寸：${gridDimensions.N}x${gridDimensions.M}，共使用${Object.keys(colorCountsMap).length}种颜色。`);
+          const sourceLabel = result.source === "v2" ? "色号网格 CSV" : "历史 HEX CSV";
+          alert(`成功导入${sourceLabel}！图纸尺寸：${gridDimensions.N}x${gridDimensions.M}，共使用${Object.keys(stats.colorCounts).length}种颜色。`);
         })
-        .catch(error => {
-          console.error('CSV导入失败:', error);
-          alert(`CSV导入失败：${error.message}`);
+        .catch((reason: unknown) => {
+          const message = reason instanceof Error ? reason.message : "无法读取文件";
+          console.error("CSV导入失败:", reason);
+          alert(`CSV导入失败：${message}`);
         });
     } else {
       const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
@@ -665,35 +660,45 @@ export default function Home() {
 
       // --- 绘制和状态更新 ---
       if (pixelatedCanvasRef.current) {
-        const counts: { [key: string]: { count: number; color: string } } = {};
-        let totalCount = 0;
-        mergedData.flat().forEach(cell => {
-          if (cell && cell.key && !cell.isExternal) {
-            // 使用hex值作为统计键值，而不是色号
-            const hexKey = cell.color;
-            if (!counts[hexKey]) {
-              counts[hexKey] = { count: 0, color: cell.color };
-            }
-            counts[hexKey].count++;
-            totalCount++;
-          }
-        });
+        const cleanupResult = automaticBackgroundCleanupEnabledRef.current
+          ? removeExternalBackground(mergedData, "automatic")
+          : null;
+        const nextMappedData = cleanupResult?.kind === "removed" ? cleanupResult.grid : mergedData;
+        const nextStats = recalculateColorStats(nextMappedData);
+        const preCleanupStats = cleanupResult?.kind === "removed"
+          ? recalculateColorStats(mergedData)
+          : null;
 
         startTransition(() => {
-          setMappedPixelData(mergedData);
+          setMappedPixelData(nextMappedData);
           setGridDimensions({ N, M });
-          setColorCounts(counts);
-          setTotalBeadCount(totalCount);
-          setInitialGridColorKeys(new Set(Object.keys(counts)));
+          setColorCounts(nextStats.colorCounts);
+          setTotalBeadCount(nextStats.totalCount);
+          setInitialGridColorKeys(new Set(Object.keys(nextStats.colorCounts)));
+          setBgRemovalSnapshot(
+            cleanupResult?.kind === "removed" && preCleanupStats
+              ? {
+                  mappedPixelData: mergedData.map((row) => row.map((cell) => ({ ...cell }))),
+                  colorCounts: preCleanupStats.colorCounts,
+                  totalBeadCount: preCleanupStats.totalCount,
+                }
+              : null,
+          );
           if (pendingEditorRemountRef.current) {
             pendingEditorRemountRef.current = false;
             setEditorMountId((value) => value + 1);
             setIsGenerationSheetOpen(false);
           }
         });
-        console.log("Color counts updated based on merged data (after merging):", counts);
-        console.log("Total bead count (total beads):", totalCount);
-        console.log("Stored initial grid color keys:", Object.keys(counts));
+        if (cleanupResult?.kind === "removed") {
+          showToast(
+            `已自动清理背景 ${beadCountFormatter.format(cleanupResult.removedCount)} 格`,
+            "undo-background",
+          );
+        }
+        console.log("Color counts updated based on merged data (after cleanup):", nextStats.colorCounts);
+        console.log("Total bead count (total beads):", nextStats.totalCount);
+        console.log("Stored initial grid color keys:", Object.keys(nextStats.colorCounts));
       } else {
         console.error("Pixelated canvas ref is null, skipping draw call in pixelateImage.");
       }
@@ -799,6 +804,7 @@ export default function Home() {
         }
         if (!projectDoc || cancelled) return;
 
+        automaticBackgroundCleanupEnabledRef.current = false;
         const grid = editorDocumentToGrid(projectDoc);
         const stats = recalculateColorStats(grid);
         setMappedPixelData(grid);
@@ -818,20 +824,6 @@ export default function Home() {
     void restore();
     return () => { cancelled = true; };
   }, []);
-
-    // --- Download function (ensure filename includes palette) ---
-    const handleDownloadRequest = (options?: GridDownloadOptions) => {
-        // 调用移动到utils/imageDownloader.ts中的downloadImage函数
-        downloadImage({
-          mappedPixelData,
-          gridDimensions,
-          colorCounts,
-          totalBeadCount,
-          options: options || downloadOptions,
-          activeBeadPalette,
-          selectedColorSystem
-        });
-    };
 
     // --- Handler to toggle color exclusion ---
     const handleToggleExcludeColor = (hexKey: string) => {
@@ -978,118 +970,40 @@ export default function Home() {
         setBgRemovalSnapshot(null);
     };
 
-  // 一键去背景：识别边缘主色并洪水填充去除
   const handleAutoRemoveBackground = () => {
     if (!mappedPixelData || !gridDimensions) {
       alert('请先生成图纸后再使用一键去背景。');
       return;
     }
 
-    // 保存快照用于单步撤回
+    const cleanupResult = removeExternalBackground(mappedPixelData, "manual");
+    if (cleanupResult.kind === "unchanged") {
+      showToast(backgroundRemovalFailureMessages[cleanupResult.reason]);
+      return;
+    }
+
     setBgRemovalSnapshot({
-      mappedPixelData: mappedPixelData.map(row => row.map(cell => ({ ...cell }))),
+      mappedPixelData: mappedPixelData.map((row) => row.map((cell) => ({ ...cell }))),
       colorCounts: colorCounts ? { ...colorCounts } : {},
       totalBeadCount,
     });
-    // 去背景会大幅改变数据，清空编辑撤回历史
     setEditHistory([]);
 
-    const { N, M } = gridDimensions;
-    const borderCounts = new Map<string, number>();
-
-    const countBorderCell = (row: number, col: number) => {
-      const cell = mappedPixelData[row]?.[col];
-      if (!cell || cell.isExternal || cell.key === TRANSPARENT_KEY) return;
-      borderCounts.set(cell.key, (borderCounts.get(cell.key) || 0) + 1);
-    };
-
-    for (let col = 0; col < N; col++) {
-      countBorderCell(0, col);
-      if (M > 1) countBorderCell(M - 1, col);
-    }
-    for (let row = 1; row < M - 1; row++) {
-      countBorderCell(row, 0);
-      if (N > 1) countBorderCell(row, N - 1);
-    }
-
-    if (borderCounts.size === 0) {
-      alert('边缘没有可识别的背景颜色。');
-      return;
-    }
-
-    let targetKey = '';
-    let maxCount = -1;
-    borderCounts.forEach((count, key) => {
-      if (count > maxCount) {
-        maxCount = count;
-        targetKey = key;
-      }
-    });
-
-    const newPixelData = mappedPixelData.map(row => row.map(cell => ({ ...cell })));
-    const visited = Array(M).fill(null).map(() => Array(N).fill(false));
-    const stack: { row: number; col: number }[] = [];
-
-    const pushIfTarget = (row: number, col: number) => {
-      if (row < 0 || row >= M || col < 0 || col >= N || visited[row][col]) {
-        return;
-      }
-      const cell = newPixelData[row][col];
-      if (!cell || cell.isExternal || cell.key !== targetKey) return;
-      visited[row][col] = true;
-      stack.push({ row, col });
-    };
-
-    for (let col = 0; col < N; col++) {
-      pushIfTarget(0, col);
-      if (M > 1) pushIfTarget(M - 1, col);
-    }
-    for (let row = 1; row < M - 1; row++) {
-      pushIfTarget(row, 0);
-      if (N > 1) pushIfTarget(row, N - 1);
-    }
-
-    if (stack.length === 0) {
-      alert('未找到可去除的背景区域。');
-      return;
-    }
-
-    while (stack.length > 0) {
-      const { row, col } = stack.pop()!;
-      newPixelData[row][col] = { ...transparentColorData };
-      pushIfTarget(row - 1, col);
-      pushIfTarget(row + 1, col);
-      pushIfTarget(row, col - 1);
-      pushIfTarget(row, col + 1);
-    }
-
-    setMappedPixelData(newPixelData);
-
-    const newColorCounts: { [hexKey: string]: { count: number; color: string } } = {};
-    let newTotalCount = 0;
-    newPixelData.flat().forEach(cell => {
-      if (cell && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
-        const cellHex = cell.color.toUpperCase();
-        if (!newColorCounts[cellHex]) {
-          newColorCounts[cellHex] = {
-            count: 0,
-            color: cellHex
-          };
-        }
-        newColorCounts[cellHex].count++;
-        newTotalCount++;
-      }
-    });
-
-    setColorCounts(newColorCounts);
-    setTotalBeadCount(newTotalCount);
-    setInitialGridColorKeys(new Set(Object.keys(newColorCounts)));
+    const nextStats = recalculateColorStats(cleanupResult.grid);
+    setMappedPixelData(cleanupResult.grid);
+    setColorCounts(nextStats.colorCounts);
+    setTotalBeadCount(nextStats.totalCount);
+    setInitialGridColorKeys(new Set(Object.keys(nextStats.colorCounts)));
 
     // 重建编辑器文档，否则工作台仍持有去背景前的旧文档，
     // 下一次 onCommit 会用旧文档重新生成网格，覆盖掉去背景结果
     if (isManualColoringMode) {
       setEditorMountId((value) => value + 1);
     }
+    showToast(
+      `已清理背景 ${beadCountFormatter.format(cleanupResult.removedCount)} 格`,
+      "undo-background",
+    );
   };
 
   // 处理自定义色板中单个颜色的选择变化
@@ -1262,6 +1176,8 @@ export default function Home() {
   }, [isManualColoringMode, editorMountId]);
 
   const handleEditorCommit = useCallback((result: EditorCommitResult) => {
+    setBgRemovalSnapshot(null);
+    setToastNotice((current) => current?.action === "undo-background" ? null : current);
     handleEditorGridChange(editorDocumentToGrid(result.document));
   }, [handleEditorGridChange]);
 
@@ -1306,7 +1222,6 @@ export default function Home() {
 
   return (
     <>
-    <style dangerouslySetInnerHTML={{ __html: '@keyframes toastFadeInOut{0%{opacity:0;transform:translate(-50%,10px)}15%{opacity:1;transform:translate(-50%,0)}85%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;transform:translate(-50%,-10px)}}' }} />
     <input
       type="file"
       accept="image/jpeg, image/png, image/gif, .csv, text/csv, application/csv, text/plain"
@@ -1389,7 +1304,6 @@ export default function Home() {
                 setTooltipData(null);
                 setIsGenerationSheetOpen(false);
               }}
-              onDownloadPattern={() => setIsDownloadSettingsOpen(true)}
               onEnterFocus={(projectId, revision) => {
                 // 工作台已在回调前将文档保存到 IndexedDB，专注模式通过 ?project= 从 IndexedDB 加载；
                 // 旧版 focusMode_* localStorage 写入在大图纸上会触发 QuotaExceededError 导致无法跳转，已移除。
@@ -1428,15 +1342,6 @@ export default function Home() {
       onUndoBackground={handleUndoBgRemoval}
     />
 
-    {/* Download Settings Modal */}
-    <DownloadSettingsModal
-      isOpen={isDownloadSettingsOpen}
-      onClose={() => setIsDownloadSettingsOpen(false)}
-      options={downloadOptions}
-      onOptionsChange={setDownloadOptions}
-      onDownload={handleDownloadRequest}
-    />
-
     {/* 自定义色板编辑器：非编辑态也可打开（例如从生成参数迁移后的入口） */}
     {!isManualColoringMode && isCustomPaletteEditorOpen && (
       <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
@@ -1467,14 +1372,25 @@ export default function Home() {
     {!isManualColoringMode && !prepareImageSrc ? <SupportRail /> : null}
 
     {/* Toast Notification */}
-    {toastMessage && (
+    {toastNotice ? (
       <div
-        className="fixed bottom-20 left-1/2 z-[100] rounded-lg bg-foreground px-4 py-2 text-sm text-background shadow-lg"
-        style={{ animation: 'toastFadeInOut 2.5s ease-in-out forwards' }}
+        className="fixed bottom-20 left-1/2 z-[100] flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-lg bg-foreground px-4 py-2 text-sm text-background shadow-lg"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
       >
-        {toastMessage}
+        <span className="min-w-0">{toastNotice.message}</span>
+        {toastNotice.action === "undo-background" ? (
+          <button
+            type="button"
+            className="shrink-0 whitespace-nowrap rounded-md px-2 py-1 font-medium underline underline-offset-2 hover:bg-background/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-background"
+            onClick={handleUndoBgRemoval}
+          >
+            撤回
+          </button>
+        ) : null}
       </div>
-    )}
+    ) : null}
     </>
   );
 }

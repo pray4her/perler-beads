@@ -102,7 +102,7 @@ export function createEditorDocument(
     display: {
       gridVisibility: "auto",
       codeVisibility: "auto",
-      majorGridInterval: 5,
+      majorGridInterval: 10,
       tiledPreview: false,
     },
     preview: { ...defaultEditorPreviewSettings },

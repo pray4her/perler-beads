@@ -1,4 +1,6 @@
 import React from 'react';
+import { Button } from '@/components/ui/button';
+import { CheckCheck, Undo2 } from 'lucide-react';
 
 interface ColorStatusBarProps {
   currentColor: string;
@@ -9,12 +11,15 @@ interface ColorStatusBarProps {
     completed: number;
   };
   progressPercentage: number;
+  /** 一键完成/撤销当前颜色 */
+  onToggleComplete?: () => void;
 }
 
 const ColorStatusBar: React.FC<ColorStatusBarProps> = ({
   currentColor,
   colorInfo,
-  progressPercentage
+  progressPercentage,
+  onToggleComplete
 }) => {
   if (!colorInfo) {
     return (
@@ -25,18 +30,19 @@ const ColorStatusBar: React.FC<ColorStatusBarProps> = ({
   }
 
   const remaining = Math.max(0, colorInfo.total - colorInfo.completed);
+  const isComplete = colorInfo.completed >= colorInfo.total;
 
   return (
-    <div className="min-h-14 bg-card border-b border-border px-4 py-2 flex items-center justify-between">
-      <div className="flex items-center space-x-3">
+    <div className="min-h-14 bg-card border-b border-border px-4 py-2 flex items-center justify-between gap-2">
+      <div className="flex items-center space-x-3 min-w-0">
         <div
-          className="w-9 h-9 rounded-lg border border-border shadow-sm"
+          className="w-9 h-9 rounded-lg border border-border shadow-sm shrink-0"
           style={{ backgroundColor: currentColor }}
         />
-        <div className="text-sm font-mono font-bold text-foreground px-2">
+        <div className="text-sm font-mono font-bold text-foreground px-2 truncate">
           {colorInfo.name}
         </div>
-        <div className="flex flex-col">
+        <div className="flex flex-col shrink-0">
           <div className="text-sm font-medium text-foreground">
             {colorInfo.completed}/{colorInfo.total}
           </div>
@@ -46,9 +52,32 @@ const ColorStatusBar: React.FC<ColorStatusBarProps> = ({
         </div>
       </div>
 
-      <div className="text-right">
-        <div className="text-lg font-bold text-primary">
-          {progressPercentage}%
+      <div className="flex items-center gap-3 shrink-0">
+        {onToggleComplete && (
+          <Button
+            variant={isComplete ? 'outline' : 'default'}
+            size="sm"
+            aria-label={isComplete ? '撤销当前颜色的全部标记' : '一键完成当前颜色'}
+            onClick={onToggleComplete}
+            className="min-h-11 px-3"
+          >
+            {isComplete ? (
+              <>
+                <Undo2 className="h-4 w-4" />
+                重置该色
+              </>
+            ) : (
+              <>
+                <CheckCheck className="h-4 w-4" />
+                完成该色
+              </>
+            )}
+          </Button>
+        )}
+        <div className="text-right">
+          <div className="text-lg font-bold text-primary">
+            {progressPercentage}%
+          </div>
         </div>
       </div>
     </div>

@@ -479,56 +479,32 @@ export default function FocusMode() {
     }));
   }, [calculateRecommendedRegion]);
 
-  // 处理格子点击 - 区域洪水填充标记
-  // 逐色模式只响应当前色；逐行模式以被点格子自身的颜色标记
-  const handleCellClick = useCallback((row: number, col: number) => {
+  // 提交一组新的完成格子：统一处理进度重算、庆祝、切色/打卡、逐行推进
+  const commitCompletedCells = useCallback((
+    newCompletedCells: Set<string>,
+    changedColor: string,
+    selectedCell?: { row: number; col: number }
+  ) => {
     if (!mappedPixelData) return;
 
-    const cellColor = mappedPixelData[row][col].color;
     const isRowMode = focusState.progressMode === 'row';
-
-    if (!isRowMode && cellColor !== focusState.currentColor) return;
-
-    const targetColor = isRowMode ? cellColor : focusState.currentColor;
-
-    // 获取点击位置的连通区域
-    const region = getConnectedRegion(mappedPixelData, row, col, targetColor);
-
-    if (region.length === 0) return;
-
-    const newCompletedCells = new Set(focusState.completedCells);
-
-    // 检查区域是否已完成
-    const isCurrentlyCompleted = isRegionCompleted(region, focusState.completedCells);
-
-    if (isCurrentlyCompleted) {
-      // 如果区域已完成，取消整个区域的完成状态
-      region.forEach(({ row: r, col: c }) => {
-        newCompletedCells.delete(`${r},${c}`);
-      });
-    } else {
-      // 如果区域未完成，标记整个区域为完成
-      region.forEach(({ row: r, col: c }) => {
-        newCompletedCells.add(`${r},${c}`);
-      });
-    }
 
     // 更新进度
     const newColorProgress = { ...focusState.colorProgress };
     let colorJustCompleted = false;
 
-    if (newColorProgress[targetColor]) {
-      const oldCompleted = newColorProgress[targetColor].completed;
+    if (newColorProgress[changedColor]) {
+      const oldCompleted = newColorProgress[changedColor].completed;
       const newCompleted = Array.from(newCompletedCells)
         .filter(key => {
           const [r, c] = key.split(',').map(Number);
-          return mappedPixelData[r]?.[c]?.color === targetColor;
+          return mappedPixelData[r]?.[c]?.color === changedColor;
         }).length;
 
-      newColorProgress[targetColor] = { ...newColorProgress[targetColor], completed: newCompleted };
+      newColorProgress[changedColor] = { ...newColorProgress[changedColor], completed: newCompleted };
 
       // 检测颜色是否刚刚完成（逐行模式不触发单色庆祝）
-      const total = newColorProgress[targetColor].total;
+      const total = newColorProgress[changedColor].total;
       if (!isRowMode && oldCompleted < total && newCompleted === total) {
         colorJustCompleted = true;
       }
@@ -544,7 +520,7 @@ export default function FocusMode() {
       let newState = {
         ...prev,
         completedCells: newCompletedCells,
-        selectedCell: { row, col },
+        selectedCell: selectedCell ?? prev.selectedCell,
         colorProgress: newColorProgress,
         showCelebration: colorJustCompleted && focusState.enableCelebration
       };
@@ -608,7 +584,69 @@ export default function FocusMode() {
         }
       }
     }
-  }, [mappedPixelData, focusState.currentColor, focusState.completedCells, focusState.colorProgress, focusState.enableCelebration, focusState.progressMode, focusState.currentRow, colorTotals]);
+  }, [mappedPixelData, focusState.progressMode, focusState.currentRow, focusState.colorProgress, focusState.enableCelebration, focusState.currentColor, colorTotals]);
+
+  // 处理格子点击 - 区域洪水填充标记
+  // 逐色模式只响应当前色；逐行模式以被点格子自身的颜色标记
+  const handleCellClick = useCallback((row: number, col: number) => {
+    if (!mappedPixelData) return;
+
+    const cellColor = mappedPixelData[row][col].color;
+    const isRowMode = focusState.progressMode === 'row';
+
+    if (!isRowMode && cellColor !== focusState.currentColor) return;
+
+    const targetColor = isRowMode ? cellColor : focusState.currentColor;
+
+    // 获取点击位置的连通区域
+    const region = getConnectedRegion(mappedPixelData, row, col, targetColor);
+
+    if (region.length === 0) return;
+
+    const newCompletedCells = new Set(focusState.completedCells);
+
+    // 检查区域是否已完成
+    const isCurrentlyCompleted = isRegionCompleted(region, focusState.completedCells);
+
+    if (isCurrentlyCompleted) {
+      // 如果区域已完成，取消整个区域的完成状态
+      region.forEach(({ row: r, col: c }) => {
+        newCompletedCells.delete(`${r},${c}`);
+      });
+    } else {
+      // 如果区域未完成，标记整个区域为完成
+      region.forEach(({ row: r, col: c }) => {
+        newCompletedCells.add(`${r},${c}`);
+      });
+    }
+
+    commitCompletedCells(newCompletedCells, targetColor, { row, col });
+  }, [mappedPixelData, focusState.progressMode, focusState.currentColor, focusState.completedCells, commitCompletedCells]);
+
+  // 一键完成/撤销当前颜色（逐色模式）：整色标记或整色取消
+  const handleToggleCurrentColorComplete = useCallback(() => {
+    if (!mappedPixelData || !focusState.currentColor) return;
+
+    const currentColor = focusState.currentColor;
+    const progress = focusState.colorProgress[currentColor];
+    const isComplete = !!progress && progress.completed >= progress.total;
+
+    const newCompletedCells = new Set(focusState.completedCells);
+    for (let row = 0; row < mappedPixelData.length; row++) {
+      for (let col = 0; col < mappedPixelData[row].length; col++) {
+        const cell = mappedPixelData[row][col];
+        if (cell?.isExternal || cell.color !== currentColor) continue;
+        const key = `${row},${col}`;
+        if (isComplete) {
+          newCompletedCells.delete(key);
+        } else {
+          newCompletedCells.add(key);
+        }
+      }
+    }
+
+    commitCompletedCells(newCompletedCells, currentColor);
+  }, [mappedPixelData, focusState.currentColor, focusState.colorProgress, focusState.completedCells, commitCompletedCells]);
 
   // 处理颜色切换
   const handleColorChange = useCallback((color: string) => {
@@ -861,6 +899,7 @@ export default function FocusMode() {
             currentColor={focusState.currentColor}
             colorInfo={currentColorInfo}
             progressPercentage={progressPercentage}
+            onToggleComplete={handleToggleCurrentColorComplete}
           />
         )}
 

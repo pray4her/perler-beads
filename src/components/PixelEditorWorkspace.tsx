@@ -11,7 +11,6 @@ import {
   Crop,
   Download,
   Eraser,
-  FileArchive,
   FlipHorizontal,
   FlipVertical,
   Focus,
@@ -32,6 +31,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import React, {
   type PointerEvent as ReactPointerEvent,
   useCallback,
@@ -54,7 +54,6 @@ import {
   resizeEditorDocument,
   trimTransparent,
 } from "@/editor/document";
-import { copyProductToClipboard, createPatternCsv, exportPatternPdf, renderProductPng } from "@/editor/exporters";
 import {
   getBrushPoints,
   getEllipsePoints,
@@ -100,6 +99,11 @@ import type { EditorTool, PaletteSortMode, RectangleMode } from "@/types/editorT
 import { getColorKeyByHex, type ColorSystem } from "@/utils/colorSystemUtils";
 import { TRANSPARENT_KEY } from "@/utils/pixelEditingUtils";
 
+const ExportCenter = dynamic(
+  () => import("@/components/ExportCenter").then((module) => module.ExportCenter),
+  { ssr: false },
+);
+
 interface PaletteItem {
   key: string;
   color: string;
@@ -111,7 +115,6 @@ interface PixelEditorWorkspaceProps {
   currentColors: PaletteItem[];
   onCommit: (result: EditorCommitResult) => void;
   onExit: () => void;
-  onDownloadPattern: () => void;
   onEnterFocus?: (projectId: string, revision: number) => void;
   onOpenGenerationParams?: () => void;
   onOpenCustomPalette?: () => void;
@@ -390,7 +393,6 @@ export default function PixelEditorWorkspace({
   currentColors,
   onCommit,
   onExit,
-  onDownloadPattern,
   onEnterFocus,
   onOpenGenerationParams,
   onOpenCustomPalette,
@@ -438,6 +440,7 @@ export default function PixelEditorWorkspace({
   const [tool, setTool] = useState<EditorTool>("move");
   const [toolbarIndex, setToolbarIndex] = useState(0);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("color");
+  const [isExportOpen, setIsExportOpen] = useState(false);
   const [activeCell, setActiveCell] = useState<CellPoint>({ row: 0, col: 0 });
   const [selection, setSelection] = useState<SelectionMask | null>(null);
   // Stable handle so the store commit callback (created before this state exists) can restore selections.
@@ -1403,26 +1406,6 @@ export default function PixelEditorWorkspace({
     });
   }, [currentColors, document.colorSystem, paletteColors, paletteSearch, paletteSort, paletteSource, selectedColor.color, sortAscending, usageMap]);
 
-  const topExport = async (kind: "product" | "csv" | "pdf" | "project" | "clipboard") => {
-    try {
-      if (kind === "product") downloadNamedBlob(await renderProductPng(document), `${document.name}.png`);
-      if (kind === "csv") downloadNamedBlob(createPatternCsv(document), `${document.name}.csv`);
-      if (kind === "pdf") {
-        const pages = boardSummary.boardColumns * boardSummary.boardRows;
-        if (pages > 64 && !window.confirm(`将生成 ${pages} 个板面页面，是否继续？`)) return;
-        downloadNamedBlob(await exportPatternPdf(document), `${document.name}.pdf`);
-      }
-      if (kind === "project") downloadNamedBlob(await exportPerlerProject(document), `${document.name}.perler`);
-      if (kind === "clipboard") await copyProductToClipboard(document);
-      setStatusMessage("导出完成");
-    } catch (error) {
-      if (kind === "clipboard") {
-        downloadNamedBlob(await renderProductPng(document), `${document.name}.png`);
-        setStatusMessage("剪贴板不可用，已改为下载 PNG");
-      } else setStatusMessage(error instanceof Error ? error.message : "导出失败");
-    }
-  };
-
   const importProjectFile = async (file?: File) => {
     if (!file) return;
     try {
@@ -1516,7 +1499,7 @@ export default function PixelEditorWorkspace({
             <button type="button" onClick={onOpenCustomPalette} title="管理色板">色板</button>
           ) : null}
           <button type="button" onClick={() => void saveNow()}><Save className="h-4 w-4" />保存项目</button>
-          <button type="button" onClick={() => setInspectorTab("make")}><Download className="h-4 w-4" />导出</button>
+          <button type="button" onClick={() => setIsExportOpen(true)}><Download className="h-4 w-4" />导出</button>
           <button type="button" onClick={() => void enterFocus()}><Focus className="h-4 w-4" />专注制作</button>
           <Button size="sm" variant="outline" onClick={onExit}>完成</Button>
         </div>
@@ -1651,8 +1634,6 @@ export default function PixelEditorWorkspace({
               })}</div>
               <div><strong>制作风险</strong><p>{activeWarnings.length ? `发现 ${activeWarnings.length} 项提示；这些提示不会阻止导出。` : "未发现明显的孤立或脆弱结构。"}</p></div>
               <div className="editor-warning-list">{activeWarnings.slice(0, 8).map((warning) => <button type="button" key={warning.id} onClick={() => { const index = warning.indices[0]; setActiveCell({ row: Math.floor(index / document.width), col: index % document.width }); setIgnoredWarnings((items) => new Set(items).add(warning.id)); }}>{warning.message}<small>定位并忽略</small></button>)}</div>
-              <div><strong>导出</strong><p>制作底稿沿用完整坐标、色号和用料清单格式。</p></div>
-              <div className="editor-action-grid"><button type="button" onClick={() => void topExport("product")}>产品 PNG</button><button type="button" onClick={onDownloadPattern}>工艺图 PNG</button><button type="button" onClick={() => void topExport("csv")}>CSV</button><button type="button" onClick={() => void topExport("pdf")}>A4 PDF</button><button type="button" onClick={() => void topExport("clipboard")}>复制图片</button><button type="button" onClick={() => void topExport("project")}><FileArchive className="h-4 w-4" />项目包</button></div>
               <input ref={projectInputRef} className="sr-only" type="file" accept=".perler,application/x-perler-project" onChange={(event) => void importProjectFile(event.target.files?.[0])}/><Button variant="outline" onClick={() => projectInputRef.current?.click()}>导入 .perler</Button>
               <div><strong>参考图</strong><p>参考层仅用于对照，不计入用量或产品导出。</p></div>
               <input ref={referenceInputRef} className="sr-only" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; updateDocumentSettings("reference", { blob: file, fileName: file.name, mimeType: file.type, opacity: .35, mode: "overlay" }, "设置参考图"); }}/><div className="editor-action-grid"><button type="button" onClick={() => referenceInputRef.current?.click()}>选择参考图</button><select className="editor-input" value={document.reference?.mode ?? "hidden"} onChange={(event) => updateDocumentSettings("reference", { ...document.reference, opacity: document.reference?.opacity ?? .35, mode: event.target.value as NonNullable<EditorDocumentV1["reference"]>["mode"] }, "调整参考图模式")}><option value="hidden">隐藏</option><option value="original">原图</option><option value="grid">网格</option><option value="overlay">叠加</option><option value="difference">差异</option></select></div>
@@ -1669,6 +1650,12 @@ export default function PixelEditorWorkspace({
           </div>
         </aside>
       </div>
+      <ExportCenter
+        document={document}
+        open={isExportOpen}
+        onOpenChange={setIsExportOpen}
+        onOpenPreview={() => setInspectorTab("preview")}
+      />
     </section>
   );
 }
