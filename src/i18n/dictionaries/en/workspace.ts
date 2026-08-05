@@ -34,6 +34,19 @@ export const workspace: typeof workspaceZh = {
     export: "Export",
     enterFocus: "Focus mode",
     done: "Done",
+    more: "More",
+    moreTitle: "More actions",
+  },
+  mobile: {
+    bar: {
+      color: "Color",
+      panel: "Panel",
+    },
+    sheet: {
+      colorTitle: "Colors",
+      panelTitle: "Inspector",
+      moreTitle: "More",
+    },
   },
   toolbar: {
     ariaLabel: "Canvas tools",
@@ -73,6 +86,7 @@ export const workspace: typeof workspaceZh = {
     zoomIn: "Zoom in",
     keyboardHelp:
       "Scroll to zoom; arrow keys move the active cell or nudge the selection; Enter paints or confirms; hold Space to pan; Shift + arrow keys extend the selection; Control A, X, C, V manage the selection; Control D deselects; Control Shift I inverts the selection; with the select tool, drag inside the selection to move its contents; Escape cancels.",
+    gestureHelp: "Draw with one finger; pan and pinch-zoom with two fingers.",
   },
   status: {
     ready: "Editor ready",

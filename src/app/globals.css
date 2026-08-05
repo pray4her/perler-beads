@@ -2316,12 +2316,28 @@
 }
 
 @media (max-width: 767px) {
+  .pixel-editor-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .pixel-editor-shell.is-mobile-chrome {
+    /* Mobile chrome: canvas-first shell with fixed bottom bar. */
+  }
+
   .pixel-editor-topbar {
     position: sticky;
     top: 0;
-    grid-template-columns: minmax(120px, 1fr) auto;
-    min-height: 58px;
+    flex: 0 0 auto;
+    grid-template-columns: minmax(100px, 1fr) auto auto;
+    min-height: 52px;
     padding: 6px 8px;
+    padding-top: max(6px, env(safe-area-inset-top, 0px));
   }
 
   .pixel-editor-brand span:last-child,
@@ -2335,13 +2351,14 @@
 
   .pixel-editor-top-actions > button {
     display: inline-flex;
-    min-width: 36px;
-    min-height: 36px;
+    min-width: 44px;
+    min-height: 44px;
     justify-content: center;
-    padding: 0 7px;
+    padding: 0 8px;
     font-size: 0;
   }
 
+  .pixel-editor-top-actions > button.pixel-editor-more-btn,
   .pixel-editor-top-actions > button:last-child {
     min-width: 48px;
     font-size: 11px;
@@ -2350,41 +2367,72 @@
   .pixel-editor-layout {
     display: grid;
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(390px, 62dvh) auto auto;
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1 1 auto;
+    min-height: 0;
     height: auto;
-    min-height: calc(100dvh - 90px);
+  }
+
+  .pixel-editor-layout.is-mobile {
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .pixel-editor-canvas-column {
     grid-row: 1;
+    min-height: 0;
   }
 
   .pixel-editor-viewport {
-    padding: 28px;
+    padding: 16px;
+    min-height: 0;
   }
 
-  .pixel-editor-tools {
-    grid-row: 2;
-    flex-direction: row;
-    padding: 6px;
-    overflow-x: auto;
+  /* Inspector stays mounted; shown as a bottom sheet when opened from the mobile bar. */
+  .pixel-editor-shell.is-mobile-chrome .pixel-editor-tools {
+    display: none;
+  }
+
+  .pixel-editor-shell.is-mobile-chrome .pixel-editor-inspector {
+    display: none;
+  }
+
+  .pixel-editor-shell.is-mobile-chrome.is-inspector-sheet-open .pixel-editor-inspector {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    z-index: 60;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: auto;
+    max-height: 75dvh;
+    min-height: 0;
+    margin: 0;
+    border: 0;
     border-top: 1px solid var(--editor-divider);
-    border-right: 0;
+    border-radius: 16px 16px 0 0;
+    background: var(--editor-chrome);
+    box-shadow: 0 -8px 32px color-mix(in srgb, var(--foreground) 16%, transparent);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
-  .pixel-editor-tools button {
-    min-width: 62px;
-    min-height: 54px;
-    flex: 0 0 62px;
+  .pixel-editor-shell.is-mobile-chrome.is-inspector-sheet-open .pixel-editor-inspector-body {
+    overflow-y: auto;
+    max-height: calc(75dvh - 52px);
   }
 
-  .pixel-editor-inspector {
-    grid-row: 3;
-    position: relative;
-    min-height: 420px;
-    max-height: 70dvh;
-    border-top: 1px solid var(--editor-divider);
-    border-left: 0;
+  .pixel-editor-mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    border: 0;
+    background: color-mix(in srgb, var(--foreground) 28%, transparent);
+    cursor: pointer;
+  }
+
+  .pixel-editor-inspector--sheet {
+    border: 0;
+    background: transparent;
   }
 
   .pixel-editor-statusbar {
@@ -2396,13 +2444,92 @@
     display: none;
   }
 
-  .pixel-editor-inspector-body {
-    max-height: 520px;
-  }
-
   .pixel-editor-minimap {
     width: 112px !important;
     height: 76px !important;
+  }
+
+  .pixel-editor-mobile-bar {
+    flex: 0 0 auto;
+    z-index: 4;
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    min-height: 56px;
+    padding: 6px 8px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--editor-divider);
+    background: var(--editor-chrome);
+  }
+
+  .pixel-editor-mobile-tools {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .pixel-editor-mobile-tools button,
+  .pixel-editor-mobile-action {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 4px 6px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--foreground);
+    font-size: 10px;
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+
+  .pixel-editor-mobile-tools button.is-active,
+  .pixel-editor-mobile-action.is-active {
+    border-color: color-mix(in srgb, var(--editor-accent) 55%, transparent);
+    background: color-mix(in srgb, var(--editor-accent) 12%, transparent);
+    color: var(--editor-accent);
+  }
+
+  .pixel-editor-mobile-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+    padding-left: 4px;
+    border-left: 1px solid var(--editor-divider);
+  }
+
+  .pixel-editor-mobile-sheet-body .editor-inspector-section {
+    padding-bottom: 8px;
+  }
+
+  .pixel-editor-more-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .pixel-editor-more-list > button,
+  .pixel-editor-more-list > .pixel-editor-more-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid var(--editor-control-border);
+    border-radius: 12px;
+    background: var(--card);
+    color: var(--foreground);
+    font-size: 14px;
+    text-align: left;
   }
 }
 

@@ -165,6 +165,12 @@ if (!/ResultPreviewPanel/.test(editor) || !/ExportCenter/.test(editor) || !/setI
 if (!/touchPointersRef/.test(editor) || !/pinchRef/.test(editor)) {
   failures.push('editor-touch: two-pointer pan and zoom gesture state is not wired');
 }
+if (!(/cameraX/.test(editor) && /worldX/.test(editor) && /BASE_CELL_SIZE \* nextZoom/.test(editor))) {
+  failures.push('editor-touch: two-finger pan+pinch must update camera from midpoint world mapping');
+}
+if (!/is-mobile-chrome/.test(editor) || !/PixelEditorMobileBottomBar/.test(editor)) {
+  failures.push('editor-mobile-shell: mobile chrome bottom bar and shell class must remain wired');
+}
 if (!/const handlePointerCancel/.test(editor) || /onPointerCancel=\{handlePointerUp\}/.test(editor)) {
   failures.push('editor-pointer-cancel: cancelled gestures must roll back transient drawing instead of committing it');
 }

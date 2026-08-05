@@ -16,6 +16,7 @@ import {
   Focus,
   Hand,
   Minus,
+  MoreHorizontal,
   MousePointer2,
   PaintBucket,
   Pencil,
@@ -44,6 +45,10 @@ import React, {
 import ResultPreviewPanel from "@/components/ResultPreviewPanel";
 import FieldHelp from "@/components/FieldHelp";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { PixelEditorChromeProvider, usePixelEditorChrome } from "@/components/editor/PixelEditorChromeContext";
+import { PixelEditorInspectorPanels } from "@/components/editor/PixelEditorInspectorPanels";
+import { PixelEditorMobileBottomBar } from "@/components/editor/PixelEditorMobileBottomBar";
+import { PixelEditorMobileSheets } from "@/components/editor/PixelEditorMobileSheets";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { countColors, getBoardSummary, type ManufacturingWarning } from "@/editor/analysis";
@@ -391,7 +396,15 @@ function renderPaintStrokeOverlay(
   context.restore();
 }
 
-export default function PixelEditorWorkspace({
+export default function PixelEditorWorkspace(props: PixelEditorWorkspaceProps) {
+  return (
+    <PixelEditorChromeProvider>
+      <PixelEditorWorkspaceInner {...props} />
+    </PixelEditorChromeProvider>
+  );
+}
+
+function PixelEditorWorkspaceInner({
   initialDocument,
   paletteColors,
   currentColors,
@@ -404,6 +417,10 @@ export default function PixelEditorWorkspace({
   const t = useT();
   const { lang } = useLanguage();
   const w = t.workspace;
+  const {
+    state: { isMobile, colorSheetOpen, inspectorSheetOpen },
+    actions: { openColorSheet, openInspectorSheet, openMoreSheet, closeAllSheets },
+  } = usePixelEditorChrome();
   const toolLabels = w.tools;
   const dateTimeLocale = lang === "zh" ? "zh-CN" : "en-US";
   const onCommitRef = useRef(onCommit);
@@ -440,7 +457,16 @@ export default function PixelEditorWorkspace({
   const lastSelectionRef = useRef<SelectionMask | null>(null);
   const clipboardRef = useRef<ClipboardPayload | null>(null);
   const touchPointersRef = useRef(new Map<number, { x: number; y: number }>());
-  const pinchRef = useRef<{ distance: number; zoom: number; center: { x: number; y: number } } | null>(null);
+  /** Two-finger nav: pinch zoom + pan from midpoint (cameraX/cameraY are start camera). */
+  const pinchRef = useRef<{
+    distance: number;
+    zoom: number;
+    center: { x: number; y: number };
+    panX: number;
+    panY: number;
+    cameraX: number;
+    cameraY: number;
+  } | null>(null);
   const referenceBitmapRef = useRef<ImageBitmap | null>(null);
   const cursorLabelRef = useRef<HTMLSpanElement>(null);
   const fillInFlightRef = useRef(false);
@@ -1088,8 +1114,42 @@ export default function PixelEditorWorkspace({
       touchPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (touchPointersRef.current.size === 2) {
         const [a, b] = Array.from(touchPointersRef.current.values());
-        pinchRef.current = { distance: Math.hypot(a.x - b.x, a.y - b.y), zoom: cameraRef.current.zoom, center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+        const gesture = activeGestureRef.current;
+        // Commit in-progress drawing before two-finger nav so strokes are not discarded.
+        if (gesture && !gesture.pan && gesture.moved) {
+          if ((gesture.tool === "brush" || gesture.tool === "eraser") && gesture.patches.size > 0) {
+            executePatches(toolLabel(gesture.tool, toolLabels), Array.from(gesture.patches.values()));
+          } else if (gesture.tool === "select" && !gesture.moveSelection) {
+            applySelectionBounds(gesture.start, gesture.last);
+            pendingShapeRef.current = null;
+          } else if (gesture.tool !== "select" && SHAPE_TOOLS.has(gesture.tool)) {
+            const points = shapePoints(gesture.tool as ShapeTool, gesture.start, gesture.last, false, false);
+            executePatches(
+              toolLabel(gesture.tool, toolLabels),
+              patchesForPoints(
+                document,
+                withSymmetry(points, document.width, document.height, symmetryHorizontal, symmetryVertical, symmetryCol, symmetryRow),
+                selectedPaletteIndex(),
+                selection,
+              ),
+            );
+            pendingShapeRef.current = null;
+          }
+        }
         activeGestureRef.current = null;
+        previewPointsRef.current = [];
+        const rect = event.currentTarget.getBoundingClientRect();
+        const center = { x: (a.x + b.x) / 2 - rect.left, y: (a.y + b.y) / 2 - rect.top };
+        pinchRef.current = {
+          distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+          zoom: cameraRef.current.zoom,
+          center,
+          panX: center.x,
+          panY: center.y,
+          cameraX: cameraRef.current.x,
+          cameraY: cameraRef.current.y,
+        };
+        requestDraw();
         return;
       }
     }
@@ -1163,7 +1223,21 @@ export default function PixelEditorWorkspace({
       const [a, b] = Array.from(touchPointersRef.current.values());
       const distance = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
       const rect = event.currentTarget.getBoundingClientRect();
-      zoomAt(pinchRef.current.zoom * distance / pinchRef.current.distance, pinchRef.current.center.x - rect.left, pinchRef.current.center.y - rect.top);
+      const midX = (a.x + b.x) / 2 - rect.left;
+      const midY = (a.y + b.y) / 2 - rect.top;
+      const pinch = pinchRef.current;
+      const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinch.zoom * distance / pinch.distance));
+      const oldCell = BASE_CELL_SIZE * pinch.zoom;
+      const newCell = BASE_CELL_SIZE * nextZoom;
+      const worldX = (pinch.center.x - pinch.cameraX) / oldCell;
+      const worldY = (pinch.center.y - pinch.cameraY) / oldCell;
+      cameraRef.current = {
+        previousZoom: cameraRef.current.zoom,
+        zoom: nextZoom,
+        x: midX - worldX * newCell,
+        y: midY - worldY * newCell,
+      };
+      setCameraVersion((value) => value + 1);
       return;
     }
     const coalesced = event.nativeEvent.getCoalescedEvents?.();
@@ -1483,7 +1557,16 @@ export default function PixelEditorWorkspace({
     : 0;
 
   return (
-    <section ref={shellRef} className="pixel-editor-shell" aria-label={w.shell.ariaLabel} onBlur={(event) => {
+    <section
+      ref={shellRef}
+      className={[
+        "pixel-editor-shell",
+        isMobile ? "is-mobile-chrome" : "",
+        isMobile && (colorSheetOpen || inspectorSheetOpen) ? "is-inspector-sheet-open" : "",
+        isMobile && colorSheetOpen ? "is-color-sheet-open" : "",
+      ].filter(Boolean).join(" ")}
+      aria-label={w.shell.ariaLabel}
+      onBlur={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget)) {
         spacePressedRef.current = false;
         if (activeGestureRef.current) {
@@ -1501,20 +1584,33 @@ export default function PixelEditorWorkspace({
           <button type="button" onClick={() => store.redo()} disabled={!snapshot.canRedo} title={w.topbar.redoTitle} aria-label={w.topbar.redo}><Redo2 className="h-4 w-4" /><span>{w.topbar.redo}</span></button>
         </div>
         <div className="pixel-editor-top-actions">
-          {onOpenGenerationParams ? (
-            <button type="button" onClick={onOpenGenerationParams} title={w.topbar.generationParamsTitle}>{w.topbar.generationParams}</button>
-          ) : null}
-          {onOpenCustomPalette ? (
-            <button type="button" onClick={onOpenCustomPalette} title={w.topbar.customPaletteTitle}>{w.topbar.customPalette}</button>
-          ) : null}
-          <button type="button" onClick={() => void saveNow()}><Save className="h-4 w-4" />{w.topbar.saveProject}</button>
-          <button type="button" onClick={() => setIsExportOpen(true)}><Download className="h-4 w-4" />{w.topbar.export}</button>
-          <button type="button" onClick={() => void enterFocus()}><Focus className="h-4 w-4" />{w.topbar.enterFocus}</button>
-          <LanguageSwitcher /><Button size="sm" variant="outline" onClick={onExit}>{w.topbar.done}</Button>
+          {isMobile ? (
+            <>
+              <button type="button" className="pixel-editor-more-btn" onClick={openMoreSheet} title={w.topbar.moreTitle} aria-label={w.topbar.more}>
+                <MoreHorizontal className="h-4 w-4" />
+                <span>{w.topbar.more}</span>
+              </button>
+              <Button size="sm" variant="outline" onClick={onExit}>{w.topbar.done}</Button>
+            </>
+          ) : (
+            <>
+              {onOpenGenerationParams ? (
+                <button type="button" onClick={onOpenGenerationParams} title={w.topbar.generationParamsTitle}>{w.topbar.generationParams}</button>
+              ) : null}
+              {onOpenCustomPalette ? (
+                <button type="button" onClick={onOpenCustomPalette} title={w.topbar.customPaletteTitle}>{w.topbar.customPalette}</button>
+              ) : null}
+              <button type="button" onClick={() => void saveNow()}><Save className="h-4 w-4" />{w.topbar.saveProject}</button>
+              <button type="button" onClick={() => setIsExportOpen(true)}><Download className="h-4 w-4" />{w.topbar.export}</button>
+              <button type="button" onClick={() => void enterFocus()}><Focus className="h-4 w-4" />{w.topbar.enterFocus}</button>
+              <LanguageSwitcher /><Button size="sm" variant="outline" onClick={onExit}>{w.topbar.done}</Button>
+            </>
+          )}
         </div>
       </header>
 
-      <div className="pixel-editor-layout">
+      <div className={isMobile ? "pixel-editor-layout is-mobile" : "pixel-editor-layout"}>
+        {!isMobile ? (
         <aside className="pixel-editor-tools" role="toolbar" aria-label={w.toolbar.ariaLabel} aria-orientation="vertical" onKeyDown={(event) => {
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
           // Toolbar owns arrow-key roving; keep it from reaching the window-level editor shortcuts.
@@ -1529,6 +1625,7 @@ export default function PixelEditorWorkspace({
             return <button id={`editor-tool-${definition.id}`} key={definition.id} type="button" tabIndex={toolbarIndex === index ? 0 : -1} className={tool === definition.id ? "is-active" : ""} aria-pressed={tool === definition.id} onFocus={() => setToolbarIndex(index)} onClick={() => setTool(definition.id)} title={w.toolbar.toolTitle(toolLabels[definition.id], definition.shortcut)}><Icon className="h-5 w-5" /><span>{toolLabels[definition.id]}</span><kbd>{definition.shortcut}</kbd></button>;
           })}
         </aside>
+        ) : null}
 
         <div className="pixel-editor-canvas-column">
           <div className="pixel-editor-contextbar" aria-label={w.contextbar.optionsAriaLabel(toolLabels[tool])}>
@@ -1552,7 +1649,7 @@ export default function PixelEditorWorkspace({
               aria-rowcount={document.height}
               aria-colcount={document.width}
               aria-activedescendant="editor-active-cell"
-              aria-describedby="pixel-editor-canvas-help"
+              aria-describedby="pixel-editor-canvas-help pixel-editor-canvas-gesture-help"
               onPointerDown={(event) => void handlePointerDown(event)}
               onPointerMove={handlePointerMove}
               onPointerUp={(event) => finishPointer(event)}
@@ -1575,11 +1672,17 @@ export default function PixelEditorWorkspace({
           </div>
           <div className="pixel-editor-statusbar"><span>{toolLabels[tool]}</span><span ref={cursorLabelRef}>{w.canvasView.cursorPosition(activeCell.row + 1, activeCell.col + 1)}</span><span>{w.canvasView.selectionCells(selectionCount ? String(selectionCount) : "—")}</span><span role="status" aria-live="polite">{statusMessage}</span><div className="pixel-editor-zoom"><button type="button" onClick={() => zoomAt(cameraRef.current.zoom / 1.2)} aria-label={w.canvasView.zoomOut}><ZoomOut className="h-4 w-4" /></button><button type="button" onClick={() => zoomAt(cameraRef.current.previousZoom)}>{Math.round(cameraRef.current.zoom * 100)}%</button><button type="button" onClick={() => zoomAt(cameraRef.current.zoom * 1.2)} aria-label={w.canvasView.zoomIn}><ZoomIn className="h-4 w-4" /></button></div></div>
           <span id="pixel-editor-canvas-help" className="sr-only">{w.canvasView.keyboardHelp}</span>
+          <span id="pixel-editor-canvas-gesture-help" className="sr-only">{w.canvasView.gestureHelp}</span>
         </div>
 
         <aside className="pixel-editor-inspector">
-          <nav className="pixel-editor-tabs" role="tablist" aria-label={w.inspector.tabsAriaLabel}>{(["color", "selection", "canvas", "make", "preview", "history"] as const).map((id) => <button key={id} role="tab" type="button" aria-selected={inspectorTab === id} className={inspectorTab === id ? "is-active" : ""} onClick={() => setInspectorTab(id)}>{w.inspector.tabs[id]}</button>)}</nav>
-          <div className="pixel-editor-inspector-body">
+          <PixelEditorInspectorPanels
+            tab={inspectorTab}
+            onTabChange={setInspectorTab}
+            tabsAriaLabel={w.inspector.tabsAriaLabel}
+            tabLabels={w.inspector.tabs}
+            hideTabs={Boolean(isMobile && colorSheetOpen)}
+          >
             {inspectorTab === "color" && <div className="editor-inspector-section">
               <div className="editor-current-color"><span style={{ backgroundColor: selectedColor.color }} /><div><strong>{getColorKeyByHex(selectedColor.color, document.colorSystem)}</strong><small>{selectedColor.color.toUpperCase()} · {w.inspector.color.foreground}</small></div><button type="button" title={w.inspector.color.swapColorsTitle} onClick={() => { const foreground = selectedColor; setSelectedColor(backgroundColor); setBackgroundColor(foreground); }}>⇄</button><span style={{ backgroundColor: backgroundColor.color }} title={w.inspector.color.backgroundTitle} /></div>
               {recentColors.length > 0 && <><small>{w.inspector.color.recentColors}</small><div className="editor-palette-grid compact">{recentColors.map((entry) => paletteButton(entry, "recent-"))}</div></>}
@@ -1656,14 +1759,64 @@ export default function PixelEditorWorkspace({
               <div className="editor-history-list"><button type="button" className={snapshot.historyIndex === 0 ? "is-active" : ""} onClick={() => store.rollbackTo(0)}>{w.inspector.history.initial}</button>{snapshot.history.map((entry, index) => <button key={entry.id} type="button" className={snapshot.historyIndex === index + 1 ? "is-active" : ""} onClick={() => { if (snapshot.historyIndex < snapshot.history.length && index + 1 < snapshot.historyIndex && !window.confirm(w.confirms.rollbackDiscard)) return; store.rollbackTo(index + 1); }}><span>{entry.label}</span><small>{w.inspector.history.entryInfo(entry.affectedCells, new Date(entry.timestamp).toLocaleTimeString(dateTimeLocale))}</small></button>)}</div>
               <div className="editor-field"><Label htmlFor="snapshot-name">{w.inspector.history.snapshotLabel}</Label><input id="snapshot-name" className="editor-input" value={namedSnapshot} onChange={(event) => setNamedSnapshot(event.target.value)} placeholder={w.inspector.history.snapshotPlaceholder} /></div><Button variant="outline" onClick={() => void saveNamedSnapshot(document, namedSnapshot).then(() => { setNamedSnapshot(""); setStatusMessage(w.status.snapshotSaved); })}>{w.inspector.history.saveSnapshot}</Button>
             </div>}
-          </div>
+          </PixelEditorInspectorPanels>
         </aside>
       </div>
+      {isMobile && (colorSheetOpen || inspectorSheetOpen) ? (
+        <button
+          type="button"
+          className="pixel-editor-mobile-backdrop"
+          aria-label={w.mobile.sheet.panelTitle}
+          onClick={closeAllSheets}
+        />
+      ) : null}
+      {isMobile ? (
+        <>
+          <PixelEditorMobileBottomBar
+            tools={toolDefinitions}
+            tool={tool}
+            toolLabels={toolLabels}
+            toolbarAriaLabel={w.toolbar.ariaLabel}
+            toolTitle={w.toolbar.toolTitle}
+            colorLabel={w.mobile.bar.color}
+            panelLabel={w.mobile.bar.panel}
+            onSelectTool={setTool}
+            onOpenColor={() => {
+              setInspectorTab("color");
+              openColorSheet();
+            }}
+          />
+          <PixelEditorMobileSheets
+            colorTitle={w.mobile.sheet.colorTitle}
+            panelTitle={w.mobile.sheet.panelTitle}
+            moreTitle={w.mobile.sheet.moreTitle}
+            colorContent={null}
+            inspectorContent={null}
+            moreContent={(
+              <div className="pixel-editor-more-list">
+                {onOpenGenerationParams ? (
+                  <button type="button" onClick={() => { closeAllSheets(); onOpenGenerationParams(); }}>{w.topbar.generationParams}</button>
+                ) : null}
+                {onOpenCustomPalette ? (
+                  <button type="button" onClick={() => { closeAllSheets(); onOpenCustomPalette(); }}>{w.topbar.customPalette}</button>
+                ) : null}
+                <button type="button" onClick={() => { closeAllSheets(); void saveNow(); }}><Save className="h-4 w-4" />{w.topbar.saveProject}</button>
+                <button type="button" onClick={() => { closeAllSheets(); setIsExportOpen(true); }}><Download className="h-4 w-4" />{w.topbar.export}</button>
+                <button type="button" onClick={() => { closeAllSheets(); void enterFocus(); }}><Focus className="h-4 w-4" />{w.topbar.enterFocus}</button>
+                <div className="pixel-editor-more-row"><LanguageSwitcher /></div>
+              </div>
+            )}
+          />
+        </>
+      ) : null}
       <ExportCenter
         document={document}
         open={isExportOpen}
         onOpenChange={setIsExportOpen}
-        onOpenPreview={() => setInspectorTab("preview")}
+        onOpenPreview={() => {
+          setInspectorTab("preview");
+          if (isMobile) openInspectorSheet();
+        }}
       />
     </section>
   );

@@ -34,6 +34,19 @@ export const workspace = {
     export: "导出",
     enterFocus: "专注制作",
     done: "完成",
+    more: "更多",
+    moreTitle: "更多操作",
+  },
+  mobile: {
+    bar: {
+      color: "颜色",
+      panel: "面板",
+    },
+    sheet: {
+      colorTitle: "颜色",
+      panelTitle: "检查器",
+      moreTitle: "更多",
+    },
   },
   toolbar: {
     ariaLabel: "画布工具",
@@ -73,6 +86,7 @@ export const workspace = {
     zoomIn: "放大",
     keyboardHelp:
       "滚轮缩放画布；方向键移动活动格或选区；Enter 绘制或确认；按住空格拖动画布；Shift 加方向键扩展选择；Control A、X、C、V 管理选区；Control D 取消选择；Control Shift I 反选；选择工具在选区内拖动可移动内容；Escape 取消。",
+    gestureHelp: "单指绘制；双指平移并缩放。",
   },
   status: {
     ready: "编辑器已就绪",
