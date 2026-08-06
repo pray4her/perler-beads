@@ -1523,6 +1523,17 @@ function PixelEditorWorkspaceInner({
     setProjects(await listProjects());
   };
 
+  const renameCurrentDocument = () => {
+    const name = window.prompt(w.confirms.renamePrompt, document.name)?.trim();
+    if (!name || name === document.name) return;
+    const next = cloneEditorDocument(document);
+    next.name = name;
+    executeStructural(w.historyLabels.renameProject(name), next);
+  };
+
+  const saveStatusLabel =
+    saveState === "saving" ? w.shell.saveSaving : saveState === "saved" ? w.shell.saveSaved : w.shell.saveRecovered;
+
   const exportStoredProject = async (projectId: string) => {
     const source = await loadProject(projectId);
     if (!source) return;
@@ -1578,19 +1589,46 @@ function PixelEditorWorkspaceInner({
       }
     }}>
       <header className="pixel-editor-topbar">
-        <div className="pixel-editor-brand"><span className="pixel-editor-mark" aria-hidden="true" /><div><strong>{document.name}</strong><span>{w.shell.dimensions(document.width, document.height)} · {saveState === "saving" ? w.shell.saveSaving : saveState === "saved" ? w.shell.saveSaved : w.shell.saveRecovered}</span></div></div>
+        <div className="pixel-editor-brand">
+          <span className="pixel-editor-mark" aria-hidden="true" />
+          <button
+            type="button"
+            className="pixel-editor-title-btn"
+            onClick={renameCurrentDocument}
+            aria-label={w.topbar.renameProjectAria}
+            title={w.topbar.renameProjectAria}
+          >
+            <strong className="pixel-editor-title-text">{document.name}</strong>
+            <span className="pixel-editor-title-meta">
+              {w.shell.dimensions(document.width, document.height)} · {saveStatusLabel}
+            </span>
+          </button>
+        </div>
         <div className="pixel-editor-history" aria-label={w.topbar.historyAriaLabel}>
-          <button type="button" onClick={() => store.undo()} disabled={!snapshot.canUndo} title={w.topbar.undoTitle} aria-label={w.topbar.undo}><Undo2 className="h-4 w-4" /><span>{w.topbar.undo}</span></button>
-          <button type="button" onClick={() => store.redo()} disabled={!snapshot.canRedo} title={w.topbar.redoTitle} aria-label={w.topbar.redo}><Redo2 className="h-4 w-4" /><span>{w.topbar.redo}</span></button>
+          <button type="button" onClick={() => store.undo()} disabled={!snapshot.canUndo} title={w.topbar.undoTitle} aria-label={w.topbar.undo}>
+            <Undo2 className="h-4 w-4" aria-hidden="true" />
+            <span>{w.topbar.undo}</span>
+          </button>
+          <button type="button" onClick={() => store.redo()} disabled={!snapshot.canRedo} title={w.topbar.redoTitle} aria-label={w.topbar.redo}>
+            <Redo2 className="h-4 w-4" aria-hidden="true" />
+            <span>{w.topbar.redo}</span>
+          </button>
         </div>
         <div className="pixel-editor-top-actions">
           {isMobile ? (
             <>
               <button type="button" className="pixel-editor-more-btn" onClick={openMoreSheet} title={w.topbar.moreTitle} aria-label={w.topbar.more}>
-                <MoreHorizontal className="h-4 w-4" />
+                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
                 <span>{w.topbar.more}</span>
               </button>
-              <Button size="sm" variant="outline" onClick={onExit}>{w.topbar.done}</Button>
+              <Button size="sm" className="pixel-editor-export-btn" onClick={() => setIsExportOpen(true)}>
+                <Download className="h-4 w-4" aria-hidden="true" />
+                {w.topbar.export}
+              </Button>
+              <Button size="sm" variant="outline" className="pixel-editor-bead-btn" onClick={() => void enterFocus()}>
+                <Focus className="h-4 w-4" aria-hidden="true" />
+                {w.topbar.enterFocusShort}
+              </Button>
             </>
           ) : (
             <>
@@ -1600,9 +1638,9 @@ function PixelEditorWorkspaceInner({
               {onOpenCustomPalette ? (
                 <button type="button" onClick={onOpenCustomPalette} title={w.topbar.customPaletteTitle}>{w.topbar.customPalette}</button>
               ) : null}
-              <button type="button" onClick={() => void saveNow()}><Save className="h-4 w-4" />{w.topbar.saveProject}</button>
-              <button type="button" onClick={() => setIsExportOpen(true)}><Download className="h-4 w-4" />{w.topbar.export}</button>
-              <button type="button" onClick={() => void enterFocus()}><Focus className="h-4 w-4" />{w.topbar.enterFocus}</button>
+              <button type="button" onClick={() => void saveNow()}><Save className="h-4 w-4" aria-hidden="true" />{w.topbar.saveProject}</button>
+              <button type="button" onClick={() => setIsExportOpen(true)}><Download className="h-4 w-4" aria-hidden="true" />{w.topbar.export}</button>
+              <button type="button" onClick={() => void enterFocus()}><Focus className="h-4 w-4" aria-hidden="true" />{w.topbar.enterFocus}</button>
               <LanguageSwitcher /><Button size="sm" variant="outline" onClick={onExit}>{w.topbar.done}</Button>
             </>
           )}
@@ -1629,13 +1667,42 @@ function PixelEditorWorkspaceInner({
 
         <div className="pixel-editor-canvas-column">
           <div className="pixel-editor-contextbar" aria-label={w.contextbar.optionsAriaLabel(toolLabels[tool])}>
-            {(tool === "brush" || tool === "eraser") && <><span>{w.contextbar.brushTip}</span>{[1, 2, 3, 5].map((size) => <button key={size} type="button" className={brushSize === size ? "is-active" : ""} onClick={() => setBrushSize(size)}>{size}</button>)}<button type="button" className={brushShape === "square" ? "is-active" : ""} onClick={() => setBrushShape("square")}>{w.contextbar.brushSquare}</button><button type="button" className={brushShape === "circle" ? "is-active" : ""} onClick={() => setBrushShape("circle")}>{w.contextbar.brushCircle}</button></>}
+            {(tool === "brush" || tool === "eraser") && (
+              <>
+                <span>{w.contextbar.brushTip}</span>
+                {[1, 2, 3, 5].map((size) => (
+                  <button key={size} type="button" className={brushSize === size ? "is-active" : ""} onClick={() => setBrushSize(size)}>{size}</button>
+                ))}
+                <button type="button" className={brushShape === "square" ? "is-active" : ""} onClick={() => setBrushShape("square")}>{w.contextbar.brushSquare}</button>
+                <button type="button" className={brushShape === "circle" ? "is-active" : ""} onClick={() => setBrushShape("circle")}>{w.contextbar.brushCircle}</button>
+                <span className="contextbar-spacer" />
+                <button
+                  type="button"
+                  className={symmetryHorizontal ? "is-active pixel-editor-symmetry-btn" : "pixel-editor-symmetry-btn"}
+                  aria-pressed={symmetryHorizontal}
+                  aria-label={w.contextbar.symmetryHorizontalAria}
+                  title={w.contextbar.symmetryHorizontalAria}
+                  onClick={() => setSymmetryHorizontal((value) => !value)}
+                >
+                  <FlipHorizontal className="h-4 w-4" aria-hidden="true" />
+                  <span>{w.contextbar.symmetryHorizontal}</span>
+                </button>
+                <button
+                  type="button"
+                  className={symmetryVertical ? "is-active pixel-editor-symmetry-btn" : "pixel-editor-symmetry-btn"}
+                  aria-pressed={symmetryVertical}
+                  aria-label={w.contextbar.symmetryVerticalAria}
+                  title={w.contextbar.symmetryVerticalAria}
+                  onClick={() => setSymmetryVertical((value) => !value)}
+                >
+                  <FlipVertical className="h-4 w-4" aria-hidden="true" />
+                  <span>{w.contextbar.symmetryVertical}</span>
+                </button>
+              </>
+            )}
             {(tool === "rectangle" || tool === "ellipse") && <><button type="button" className={rectangleMode === "outline" ? "is-active" : ""} onClick={() => setRectangleMode("outline")}>{w.contextbar.shapeOutline}</button><button type="button" className={rectangleMode === "filled" ? "is-active" : ""} onClick={() => setRectangleMode("filled")}>{w.contextbar.shapeFilled}</button><span>{w.contextbar.strokeWidth}</span><input aria-label={w.contextbar.strokeWidthAriaLabel} type="number" min="1" max="8" value={strokeWidth} onChange={(event) => setStrokeWidth(Math.max(1, Math.min(8, Number(event.target.value))))} /></>}
             {tool === "fill" && <><button type="button" className={fillMode === "connected" ? "is-active" : ""} onClick={() => setFillMode("connected")}>{w.contextbar.fillConnected}</button><button type="button" className={fillMode === "all" ? "is-active" : ""} onClick={() => setFillMode("all")}>{w.contextbar.fillAll}</button><button type="button" className={fillScope === "canvas" ? "is-active" : ""} onClick={() => setFillScope("canvas")}>{w.contextbar.fillCanvas}</button><button type="button" className={fillScope === "selection" ? "is-active" : ""} onClick={() => setFillScope("selection")}>{w.contextbar.fillSelectionOnly}</button></>}
             {tool === "select" && (["replace", "add", "subtract", "intersect"] as const).map((mode) => <button key={mode} type="button" className={selectionMode === mode ? "is-active" : ""} onClick={() => setSelectionMode(mode)}>{{ replace: w.contextbar.selectReplace, add: w.contextbar.selectAdd, subtract: w.contextbar.selectSubtract, intersect: w.contextbar.selectIntersect }[mode]}</button>)}
-            <span className="contextbar-spacer" />
-            <button type="button" className={symmetryHorizontal ? "is-active" : ""} onClick={() => setSymmetryHorizontal((value) => !value)}>{w.contextbar.symmetryHorizontal}</button>
-            <button type="button" className={symmetryVertical ? "is-active" : ""} onClick={() => setSymmetryVertical((value) => !value)}>{w.contextbar.symmetryVertical}</button>
           </div>
           <div ref={viewportRef} className="pixel-editor-viewport" style={{ touchAction: "none" }}>
             <canvas ref={gridCanvasRef} className="pixel-editor-layer pixel-editor-grid-layer" aria-hidden="true" />
@@ -1794,16 +1861,20 @@ function PixelEditorWorkspaceInner({
             inspectorContent={null}
             moreContent={(
               <div className="pixel-editor-more-list">
+                <button type="button" onClick={() => { closeAllSheets(); void saveNow(); }}>
+                  <Save className="h-4 w-4" aria-hidden="true" />
+                  {w.topbar.saveProject}
+                </button>
                 {onOpenGenerationParams ? (
                   <button type="button" onClick={() => { closeAllSheets(); onOpenGenerationParams(); }}>{w.topbar.generationParams}</button>
                 ) : null}
                 {onOpenCustomPalette ? (
                   <button type="button" onClick={() => { closeAllSheets(); onOpenCustomPalette(); }}>{w.topbar.customPalette}</button>
                 ) : null}
-                <button type="button" onClick={() => { closeAllSheets(); void saveNow(); }}><Save className="h-4 w-4" />{w.topbar.saveProject}</button>
-                <button type="button" onClick={() => { closeAllSheets(); setIsExportOpen(true); }}><Download className="h-4 w-4" />{w.topbar.export}</button>
-                <button type="button" onClick={() => { closeAllSheets(); void enterFocus(); }}><Focus className="h-4 w-4" />{w.topbar.enterFocus}</button>
-                <div className="pixel-editor-more-row"><LanguageSwitcher /></div>
+                <div className="pixel-editor-more-divider" role="separator" />
+                <button type="button" className="pixel-editor-more-danger" onClick={() => { closeAllSheets(); onExit(); }}>
+                  {w.topbar.done}
+                </button>
               </div>
             )}
           />

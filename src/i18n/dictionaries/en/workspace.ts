@@ -32,10 +32,12 @@ export const workspace: typeof workspaceZh = {
     customPalette: "Palette",
     saveProject: "Save project",
     export: "Export",
-    enterFocus: "Focus mode",
-    done: "Done",
+    enterFocus: "Start beading",
+    enterFocusShort: "Bead",
+    done: "Back to home",
     more: "More",
     moreTitle: "More actions",
+    renameProjectAria: "Rename project",
   },
   mobile: {
     bar: {
@@ -71,6 +73,8 @@ export const workspace: typeof workspaceZh = {
     selectIntersect: "Intersect",
     symmetryHorizontal: "Symmetry H",
     symmetryVertical: "Symmetry V",
+    symmetryHorizontalAria: "Horizontal symmetry",
+    symmetryVerticalAria: "Vertical symmetry",
   },
   canvasView: {
     gridAriaLabel: "Editable bead grid",
@@ -130,6 +134,7 @@ export const workspace: typeof workspaceZh = {
     batchReplace: "Batch recolor",
     importProject: (name: string) => `Import project: ${name}`,
     openProject: (name: string) => `Open project: ${name}`,
+    renameProject: (name: string) => `Rename to: ${name}`,
     copySuffix: (name: string) => `${name} copy`,
     gridVisibility: "Adjust grid visibility",
     codeVisibility: "Adjust color code visibility",
