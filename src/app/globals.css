@@ -136,6 +136,10 @@
   }
   html {
     @apply font-sans;
+    scroll-behavior: smooth;
+  }
+  p {
+    text-wrap: pretty;
   }
 }
 
@@ -2676,6 +2680,19 @@
   mask-image: linear-gradient(to bottom, black, transparent 44rem);
 }
 
+.home-landing::after {
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  right: -8%;
+  width: min(55vw, 800px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--bead-red) 9%, transparent) 0%, transparent 62%);
+  content: "";
+  pointer-events: none;
+}
+
 .home-nav-shell {
   border-color: color-mix(in srgb, var(--foreground) 11%, transparent);
   background: color-mix(in srgb, var(--background) 88%, transparent);
@@ -2700,10 +2717,10 @@
   width: 23px;
   height: 23px;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--foreground) 28%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bead-red) 60%, transparent);
   border-radius: 7px;
-  background: var(--background);
-  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--foreground) 7%, transparent);
+  background: var(--bead-red);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
 }
 
 .home-brand-mark::before,
@@ -2713,7 +2730,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--foreground);
+  background: var(--bead-red-foreground);
   content: "";
 }
 
@@ -2741,12 +2758,13 @@
 .home-final-cta button {
   min-height: 46px;
   border-radius: 9px;
+  transition: transform 120ms ease, opacity 160ms ease;
 }
 
 .home-nav-actions button:active,
 .home-hero-actions button:active,
 .home-final-cta button:active {
-  transform: translateY(1px);
+  transform: scale(0.97) translateY(1px);
 }
 
 .home-hero {
@@ -2789,13 +2807,13 @@
 }
 
 .home-hero-eyebrow {
-  margin-bottom: 18px;
-  color: color-mix(in srgb, var(--foreground) 64%, transparent);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 11px;
+  margin-bottom: 22px;
+  color: var(--bead-red);
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: .12em;
-  text-transform: uppercase;
+  font-style: italic;
+  letter-spacing: .01em;
+  text-transform: none;
 }
 
 .home-hero h1 {
@@ -2821,13 +2839,20 @@
 
 .home-primary-cta,
 .home-final-cta button {
-  background: var(--primary) !important;
-  color: var(--primary-foreground) !important;
+  background: var(--bead-red) !important;
+  color: var(--bead-red-foreground) !important;
+  transition: background 180ms ease, transform 120ms ease !important;
 }
 
 .home-primary-cta:hover,
 .home-final-cta button:hover {
-  background: color-mix(in srgb, var(--primary) 88%, var(--background)) !important;
+  background: color-mix(in srgb, var(--bead-red) 86%, var(--foreground)) !important;
+}
+
+.home-primary-cta:active,
+.home-final-cta button:active {
+  transform: scale(0.98) !important;
+  background: color-mix(in srgb, var(--bead-red) 78%, var(--foreground)) !important;
 }
 
 .hero-pattern-demo {
@@ -2984,13 +3009,14 @@
 }
 
 .trust-strip span {
-  color: color-mix(in srgb, var(--foreground) 76%, transparent);
+  color: color-mix(in srgb, var(--foreground) 82%, transparent);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 620;
+  letter-spacing: .005em;
 }
 
 .trust-strip svg {
-  color: var(--foreground);
+  color: var(--bead-red);
 }
 
 .home-section {
@@ -3038,15 +3064,30 @@
 .process-list {
   grid-template-columns: .92fr 1.16fr .92fr;
   border-color: color-mix(in srgb, var(--foreground) 18%, transparent);
+  counter-reset: process-step;
 }
 
 .process-list li {
+  position: relative;
   min-height: 176px;
   flex-wrap: nowrap;
   align-content: initial;
   align-items: flex-start;
   gap: 18px;
   padding: 35px clamp(20px, 3vw, 38px);
+  counter-increment: process-step;
+}
+
+.process-list li::before {
+  position: absolute;
+  top: 35px;
+  right: clamp(20px, 3vw, 38px);
+  content: "0" counter(process-step);
+  color: color-mix(in srgb, var(--foreground) 22%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .04em;
 }
 
 .process-list li + li {
@@ -3284,9 +3325,11 @@
   gap: 28px;
   margin-top: 24px;
   padding: 28px 32px;
-  border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bead-red) 28%, transparent);
   border-radius: 18px;
-  background: var(--home-panel);
+  background:
+    radial-gradient(ellipse at 120% 50%, color-mix(in srgb, var(--bead-red) 8%, transparent) 0%, transparent 64%),
+    var(--home-panel);
   text-align: left;
 }
 
@@ -3355,8 +3398,27 @@
 
 .guides-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1.4fr 1fr;
+  grid-template-rows: 1fr 1fr;
   gap: 16px;
+}
+
+.guide-card:first-child {
+  grid-row: 1 / 3;
+  background:
+    radial-gradient(ellipse at 8% 92%, color-mix(in srgb, var(--bead-red) 7%, transparent) 0%, transparent 56%),
+    var(--card);
+  min-height: 300px;
+}
+
+.guide-card:first-child > svg {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 6px;
+}
+
+.guide-card:first-child strong {
+  font-size: 22px;
 }
 
 .guide-card {
@@ -3574,6 +3636,11 @@
 
   .guides-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .guide-card:first-child {
+    grid-row: auto;
   }
 
   .guide-card {
