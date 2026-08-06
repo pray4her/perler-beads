@@ -39,6 +39,9 @@ export const focus: typeof focusZh = {
     rowDone: (row: number) => `Row ${row} complete`,
     rowRemaining: (row: number, remaining: number) => `Row ${row} · ${bead(remaining)} left`,
   },
+  canvas: {
+    cellLabel: (row: number, col: number) => `Row ${row} · Col ${col}`,
+  },
   toolbar: {
     color: "Color",
     colorLabel: "Select color",
@@ -78,6 +81,12 @@ export const focus: typeof focusZh = {
     lineColorGray: "Gray",
     coordinates: "Coordinate rulers",
     coordinatesDesc: "Show row and column numbers along the canvas edges",
+    gridLines: "Fine grid lines",
+    gridLinesDesc: "Show a thin divider line around every cell",
+    boardLines: "Board outlines",
+    boardLinesDesc: "Draw thick outlines matching your physical pegboard size",
+    boardLinesOff: "Off",
+    boardLinesValue: (count: number) => `${count} cells`,
     celebration: "Celebration animation",
     celebrationDesc: "Show confetti when a color is finished",
     wakeLock: "Keep screen on",

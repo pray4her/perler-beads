@@ -23,6 +23,10 @@ interface SettingsPanelProps {
   onEnableCelebrationChange: (enable: boolean) => void;
   showCoordinates: boolean;
   onShowCoordinatesChange: (show: boolean) => void;
+  showGridLines: boolean;
+  onShowGridLinesChange: (show: boolean) => void;
+  boardInterval: number;
+  onBoardIntervalChange: (interval: number) => void;
   wakeLockEnabled: boolean;
   onWakeLockEnabledChange: (enable: boolean) => void;
   onClose: () => void;
@@ -42,6 +46,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onEnableCelebrationChange,
   showCoordinates,
   onShowCoordinatesChange,
+  showGridLines,
+  onShowGridLinesChange,
+  boardInterval,
+  onBoardIntervalChange,
   wakeLockEnabled,
   onWakeLockEnabledChange,
   onClose
@@ -188,6 +196,43 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   className="h-4 w-4 accent-primary rounded"
                 />
               </label>
+
+              <label className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.gridLines}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.gridLinesDesc}</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={showGridLines}
+                  onChange={(e) => onShowGridLinesChange(e.target.checked)}
+                  className="h-4 w-4 accent-primary rounded"
+                />
+              </label>
+
+              <div>
+                <div className="mb-2">
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.boardLines}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.boardLinesDesc}</div>
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                  {[0, 52, 78, 104].map((interval) => (
+                    <label key={interval} className="flex items-center">
+                      <input
+                        type="radio"
+                        name="boardInterval"
+                        value={interval}
+                        checked={boardInterval === interval}
+                        onChange={() => onBoardIntervalChange(interval)}
+                        className="mr-1.5 accent-primary"
+                      />
+                      <span className="text-sm text-foreground">
+                        {interval === 0 ? t.focus.settings.boardLinesOff : t.focus.settings.boardLinesValue(interval)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
 
               <label className="flex items-center justify-between">
                 <div>

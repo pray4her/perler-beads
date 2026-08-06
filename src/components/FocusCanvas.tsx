@@ -16,6 +16,11 @@ interface FocusCanvasProps {
   progressMode: 'color' | 'row';
   currentRow: number;
   showCoordinates: boolean;
+  selectedCell: { row: number; col: number } | null;
+  showGridLines: boolean;
+  boardInterval: number;
+  onCellSelect: (row: number, col: number) => void;
+  formatCellLabel: (row: number, col: number) => string;
   onCellClick: (row: number, col: number) => void;
   onScaleChange: (scale: number) => void;
   onOffsetChange: (offset: { x: number; y: number }) => void;
@@ -36,6 +41,11 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
   progressMode,
   currentRow,
   showCoordinates,
+  selectedCell,
+  showGridLines,
+  boardInterval,
+  onCellSelect,
+  formatCellLabel,
   onCellClick,
   onScaleChange,
   onOffsetChange
@@ -47,6 +57,8 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
   const [lastPinchDistance, setLastPinchDistance] = useState<number | null>(null);
   // 鼠标拖拽累计位移（屏幕像素），超过阈值则抑制随后的 click，避免拖拽误触发区域标记
   const dragDistanceRef = useRef(0);
+  // hover 格走 ref + 直接重绘，指针移动热点路径不进 React state
+  const hoverCellRef = useRef<{ row: number; col: number } | null>(null);
 
   // 计算格子大小
   const cellSize = Math.max(15, Math.min(40, 300 / Math.max(gridDimensions.N, gridDimensions.M)));
@@ -159,6 +171,27 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
       ctx.strokeRect(coordLeft + 1, currentRowTop + 1, gridWidth - 2, cellSize - 2);
     }
 
+    // 细网格线：整行/整列一笔画（逐格 strokeRect 会让共享边双倍叠加变粗），
+    // 深/浅双色低透明叠加，保证深浅豆子上都可见
+    if (showGridLines) {
+      ctx.lineWidth = 1;
+      for (const gridColor of ['rgba(0, 0, 0, 0.08)', 'rgba(255, 255, 255, 0.10)']) {
+        ctx.strokeStyle = gridColor;
+        ctx.beginPath();
+        for (let col = 1; col < gridDimensions.N; col++) {
+          const x = coordLeft + col * cellSize;
+          ctx.moveTo(x, coordTop);
+          ctx.lineTo(x, canvasHeight);
+        }
+        for (let row = 1; row < gridDimensions.M; row++) {
+          const y = coordTop + row * cellSize;
+          ctx.moveTo(coordLeft, y);
+          ctx.lineTo(canvasWidth, y);
+        }
+        ctx.stroke();
+      }
+    }
+
     // 绘制分区线（在所有格子绘制完成后）
     if (showSectionLines) {
       ctx.strokeStyle = sectionLineColor;
@@ -183,26 +216,96 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
       }
     }
 
+    // 拼板边界线：按实体拼板边数加粗，画在分区线之上
+    if (boardInterval > 0) {
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let col = boardInterval; col < gridDimensions.N; col += boardInterval) {
+        const x = coordLeft + col * cellSize;
+        ctx.moveTo(x, coordTop);
+        ctx.lineTo(x, canvasHeight);
+      }
+      for (let row = boardInterval; row < gridDimensions.M; row += boardInterval) {
+        const y = coordTop + row * cellSize;
+        ctx.moveTo(coordLeft, y);
+        ctx.lineTo(canvasWidth, y);
+      }
+      ctx.stroke();
+    }
+
+    // 十字线 + 浮动坐标读数：活动格 = hover 格优先，否则为点选格
+    const activeCell = hoverCellRef.current ?? selectedCell;
+    if (activeCell) {
+      const activeX = coordLeft + activeCell.col * cellSize;
+      const activeY = coordTop + activeCell.row * cellSize;
+      const gridWidth = gridDimensions.N * cellSize;
+      const gridHeight = gridDimensions.M * cellSize;
+
+      // 整行 + 整列高亮带，两端直连标尺读数
+      ctx.fillStyle = 'rgba(0, 122, 204, 0.16)';
+      ctx.fillRect(coordLeft, activeY, gridWidth, cellSize);
+      ctx.fillRect(activeX, coordTop, cellSize, gridHeight);
+
+      // 当前格描边
+      ctx.strokeStyle = '#007acc';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(activeX + 1, activeY + 1, cellSize - 2, cellSize - 2);
+
+      // 浮动坐标读数：优先画在格子上方（避免被手指遮挡），贴顶时改画下方
+      const label = formatCellLabel(activeCell.row, activeCell.col);
+      ctx.font = '10px ui-monospace, monospace';
+      const pillWidth = ctx.measureText(label).width + 12;
+      const pillHeight = 16;
+      const pillX = Math.max(coordLeft, Math.min(activeX + cellSize / 2 - pillWidth / 2, canvasWidth - pillWidth));
+      const aboveY = activeY - pillHeight - 4;
+      const pillY = aboveY >= 0 ? aboveY : activeY + cellSize + 4;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.beginPath();
+      const pillRadius = 4;
+      ctx.moveTo(pillX + pillRadius, pillY);
+      ctx.lineTo(pillX + pillWidth - pillRadius, pillY);
+      ctx.arcTo(pillX + pillWidth, pillY, pillX + pillWidth, pillY + pillRadius, pillRadius);
+      ctx.lineTo(pillX + pillWidth, pillY + pillHeight - pillRadius);
+      ctx.arcTo(pillX + pillWidth, pillY + pillHeight, pillX + pillWidth - pillRadius, pillY + pillHeight, pillRadius);
+      ctx.lineTo(pillX + pillRadius, pillY + pillHeight);
+      ctx.arcTo(pillX, pillY + pillHeight, pillX, pillY + pillHeight - pillRadius, pillRadius);
+      ctx.lineTo(pillX, pillY + pillRadius);
+      ctx.arcTo(pillX, pillY, pillX + pillRadius, pillY, pillRadius);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, pillX + 6, pillY + pillHeight / 2 + 0.5);
+      ctx.textBaseline = 'alphabetic';
+    }
+
     // 绘制坐标标尺（最上层，1 起始与进度提示一致）
     if (showCoordinates) {
       ctx.fillStyle = '#64748b';
       ctx.font = '9px ui-monospace, monospace';
       ctx.textBaseline = 'alphabetic';
 
-      // 顶部列号：每个分区间隔一处
+      // 放大到足够（屏幕格宽 ≥ 16px）时逐格标号，否则按分区间隔
+      const labelStep = cellSize * canvasScale >= 16 ? 1 : gridSectionInterval;
+
+      // 顶部列号
       ctx.textAlign = 'left';
-      for (let col = 0; col < gridDimensions.N; col += gridSectionInterval) {
+      for (let col = 0; col < gridDimensions.N; col += labelStep) {
         ctx.fillText(String(col + 1), coordLeft + col * cellSize + 1, coordTop - 4);
       }
 
-      // 左侧行号：逐行模式每行一处，逐色模式每个分区间隔一处
-      const rowStep = progressMode === 'row' ? 1 : gridSectionInterval;
+      // 左侧行号：逐行模式每行一处，逐色模式按 labelStep
+      const rowStep = progressMode === 'row' ? 1 : labelStep;
       for (let row = 0; row < gridDimensions.M; row += rowStep) {
         const y = coordTop + row * cellSize + Math.min(cellSize - 3, cellSize / 2 + 3);
         ctx.fillText(String(row + 1), 1, y);
       }
     }
-  }, [mappedPixelData, gridDimensions, cellSize, currentColor, completedCells, recommendedCell, recommendedRegion, gridSectionInterval, showSectionLines, sectionLineColor, progressMode, currentRow, showCoordinates]);
+  }, [mappedPixelData, gridDimensions, cellSize, currentColor, completedCells, recommendedCell, recommendedRegion, gridSectionInterval, showSectionLines, sectionLineColor, progressMode, currentRow, showCoordinates, canvasScale, selectedCell, showGridLines, boardInterval, formatCellLabel]);
 
   // 处理触摸/鼠标事件
   const getEventPosition = useCallback((event: React.MouseEvent | React.TouchEvent) => {
@@ -265,9 +368,10 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
 
     const gridPos = getGridPosition(pos.x, pos.y);
     if (gridPos) {
+      onCellSelect(gridPos.row, gridPos.col);
       onCellClick(gridPos.row, gridPos.col);
     }
-  }, [onCellClick, getEventPosition, getGridPosition]);
+  }, [onCellSelect, onCellClick, getEventPosition, getGridPosition]);
 
   // 处理缩放
   const handleWheel = useCallback((event: React.WheelEvent) => {
@@ -373,13 +477,32 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
         x: event.clientX,
         y: event.clientY
       });
+      return;
     }
-  }, [isDragging, lastPanPoint, canvasOffset, canvasScale, onOffsetChange]);
+
+    // 非拖拽：追踪 hover 格驱动十字线/坐标读数（走 ref，不进 React state）
+    const pos = getEventPosition(event);
+    const gridPos = pos ? getGridPosition(pos.x, pos.y) : null;
+    const prevHover = hoverCellRef.current;
+    if (gridPos?.row !== prevHover?.row || gridPos?.col !== prevHover?.col) {
+      hoverCellRef.current = gridPos;
+      renderCanvas();
+    }
+  }, [isDragging, lastPanPoint, canvasOffset, canvasScale, onOffsetChange, getEventPosition, getGridPosition, renderCanvas]);
 
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
     setLastPanPoint(null);
   }, []);
+
+  // 离开画布：结束拖拽并清除 hover 十字线
+  const handleMouseLeave = useCallback(() => {
+    handleMouseUp();
+    if (hoverCellRef.current) {
+      hoverCellRef.current = null;
+      renderCanvas();
+    }
+  }, [handleMouseUp, renderCanvas]);
 
   // 渲染画布
   useEffect(() => {
@@ -409,7 +532,7 @@ const FocusCanvas: React.FC<FocusCanvasProps> = ({
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
         />
       </div>
     </div>

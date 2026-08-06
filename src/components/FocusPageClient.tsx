@@ -104,6 +104,8 @@ interface FocusModeState {
   showSectionLines: boolean; // 是否显示分割线
   sectionLineColor: string; // 分割线颜色
   showCoordinates: boolean; // 是否显示行列坐标标尺
+  showGridLines: boolean; // 是否显示逐格细网格线
+  boardInterval: number; // 拼板边界线间隔（0=关闭，可选 52/78/104）
   enableCelebration: boolean; // 是否启用庆祝动画
   wakeLockEnabled: boolean; // 是否在制作时保持屏幕常亮
   showCelebration: boolean; // 是否显示庆祝动画
@@ -148,6 +150,8 @@ export default function FocusPageClient() {
     showSectionLines: true,
     sectionLineColor: '#007acc',
     showCoordinates: true,
+    showGridLines: false,
+    boardInterval: 0,
     enableCelebration: true,
     wakeLockEnabled: true,
     showCelebration: false,
@@ -250,6 +254,8 @@ export default function FocusPageClient() {
             progressMode: restored.settings.progressMode,
             showCoordinates: restored.settings.showCoordinates,
             wakeLockEnabled: restored.settings.wakeLockEnabled,
+            showGridLines: restored.settings.showGridLines ?? false,
+            boardInterval: restored.settings.boardInterval ?? 0,
           } : {}),
           // 计时恢复：保存时处于暂停则保持暂停，否则以加载时刻为起点继续走表
           ...(timer ? (timer.isPaused
@@ -325,6 +331,8 @@ export default function FocusPageClient() {
           progressMode: focusState.progressMode,
           showCoordinates: focusState.showCoordinates,
           wakeLockEnabled: focusState.wakeLockEnabled,
+          showGridLines: focusState.showGridLines,
+          boardInterval: focusState.boardInterval,
         },
         // 计时读快照，避免每秒 tick 触发保存
         timer: timerSnapshotRef.current,
@@ -356,6 +364,8 @@ export default function FocusPageClient() {
     focusState.progressMode,
     focusState.showCoordinates,
     focusState.wakeLockEnabled,
+    focusState.showGridLines,
+    focusState.boardInterval,
     focusState.isPaused,
     gridDimensions,
     progressLoaded
@@ -590,6 +600,14 @@ export default function FocusPageClient() {
       }
     }
   }, [mappedPixelData, focusState.progressMode, focusState.currentRow, focusState.colorProgress, focusState.enableCelebration, focusState.currentColor, colorTotals]);
+
+  // 点按即更新当前选中格（用于十字线/坐标读数），即使该次点击不构成标记
+  const handleCellSelect = useCallback((row: number, col: number) => {
+    setFocusState(prev => ({ ...prev, selectedCell: { row, col } }));
+  }, []);
+
+  // 画布坐标读数文案（1 起始）；稳定引用避免每秒计时 tick 触发画布重绘
+  const formatCellLabel = useCallback((row: number, col: number) => t.focus.canvas.cellLabel(row + 1, col + 1), [t]);
 
   // 处理格子点击 - 区域洪水填充标记
   // 逐色模式只响应当前色；逐行模式以被点格子自身的颜色标记
@@ -928,6 +946,11 @@ export default function FocusPageClient() {
             progressMode={focusState.progressMode}
             currentRow={focusState.currentRow}
             showCoordinates={focusState.showCoordinates}
+            selectedCell={focusState.selectedCell}
+            showGridLines={focusState.showGridLines}
+            boardInterval={focusState.boardInterval}
+            onCellSelect={handleCellSelect}
+            formatCellLabel={formatCellLabel}
             onCellClick={handleCellClick}
             onScaleChange={(scale: number) => setFocusState(prev => ({ ...prev, canvasScale: scale }))}
             onOffsetChange={(offset: { x: number; y: number }) => setFocusState(prev => ({ ...prev, canvasOffset: offset }))}
@@ -975,6 +998,10 @@ export default function FocusPageClient() {
         onEnableCelebrationChange={(enable: boolean) => setFocusState(prev => ({ ...prev, enableCelebration: enable }))}
         showCoordinates={focusState.showCoordinates}
         onShowCoordinatesChange={(show: boolean) => setFocusState(prev => ({ ...prev, showCoordinates: show }))}
+        showGridLines={focusState.showGridLines}
+        onShowGridLinesChange={(show: boolean) => setFocusState(prev => ({ ...prev, showGridLines: show }))}
+        boardInterval={focusState.boardInterval}
+        onBoardIntervalChange={(interval: number) => setFocusState(prev => ({ ...prev, boardInterval: interval }))}
         wakeLockEnabled={focusState.wakeLockEnabled}
         onWakeLockEnabledChange={(enable: boolean) => setFocusState(prev => ({ ...prev, wakeLockEnabled: enable }))}
         onClose={() => setFocusState(prev => ({ ...prev, showSettingsPanel: false }))}

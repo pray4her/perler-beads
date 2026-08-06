@@ -10,6 +10,8 @@
  * 5. Editor tools, bidirectional history, centered resize, and both export surfaces remain wired.
  * 6. i18n plumbing stays in place (dictionary namespaces, metadataBase, language alternates, 301 redirects).
  * 7. Content pages (ADR 0005) keep routes, canonicals, sitemap entries, screenshots, dictionaries and home links.
+ * 8. Focus-mode location aids stay wired: selectedCell crosshair, ref-based hover, full-length fine grid lines,
+ *    gated board outlines, and persisted showGridLines/boardInterval settings.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -290,6 +292,37 @@ for (const [, canonicalPath] of contentRoutes) {
   if (!landing.includes(`href="${canonicalPath}"`)) {
     failures.push(`content-pages: HomeLanding must link to ${canonicalPath}`);
   }
+}
+
+// --- 8) focus-mode location aids (crosshair / fine grid / board lines) ---
+const focusCanvasSrc = read('src/components/FocusCanvas.tsx');
+const focusPageSrc = read('src/components/FocusPageClient.tsx');
+const projectStorageSrc = read('src/editor/projectStorage.ts');
+
+// FocusCanvas must receive the selected cell and render the crosshair from it
+if (!/selectedCell/.test(focusCanvasSrc)) {
+  failures.push('focus-location: FocusCanvas must accept selectedCell to render the crosshair highlight');
+}
+if (!/hoverCellRef/.test(focusCanvasSrc) || /useState<\{\s*row/.test(focusCanvasSrc)) {
+  failures.push('focus-location: hover tracking must stay in a ref (hoverCellRef), not React state');
+}
+// Fine grid lines must be full-length one-pass lines, never per-cell strokeRect
+if (!/showGridLines/.test(focusCanvasSrc) || !/moveTo\(coordLeft, y\)/.test(focusCanvasSrc) || !/moveTo\(x, coordTop\)/.test(focusCanvasSrc)) {
+  failures.push('focus-location: fine grid lines must be drawn as full-length moveTo/lineTo passes (per-cell strokeRect doubles shared edges)');
+}
+// Board outlines must be gated on a positive interval
+if (!/boardInterval > 0/.test(focusCanvasSrc)) {
+  failures.push('focus-location: board outlines must render only when boardInterval > 0');
+}
+// FocusPageClient must wire the new props through
+for (const prop of ['selectedCell=', 'boardInterval=', 'onCellSelect=', 'formatCellLabel=']) {
+  if (!focusPageSrc.includes(prop)) {
+    failures.push(`focus-location: FocusPageClient must pass ${prop} to FocusCanvas`);
+  }
+}
+// New settings must persist (optional fields for backward compatibility)
+if (!/boardInterval\?:\s*number/.test(projectStorageSrc) || !/showGridLines\?:\s*boolean/.test(projectStorageSrc)) {
+  failures.push('focus-location: FocusProgressSettings must persist showGridLines and boardInterval as optional fields');
 }
 
 // --- report ---

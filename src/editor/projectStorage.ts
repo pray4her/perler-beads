@@ -27,6 +27,10 @@ export interface FocusProgressSettings {
   progressMode: "color" | "row";
   showCoordinates: boolean;
   wakeLockEnabled: boolean;
+  /** 细网格线；旧记录没有该字段 */
+  showGridLines?: boolean;
+  /** 拼板边界线间隔（0=关闭，可选 52/78/104）；旧记录没有该字段 */
+  boardInterval?: number;
 }
 
 export interface FocusProgressRecord {

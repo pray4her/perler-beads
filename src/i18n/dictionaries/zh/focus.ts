@@ -34,6 +34,9 @@ export const focus = {
     rowDone: (row: number) => `第 ${row} 行已完成`,
     rowRemaining: (row: number, remaining: number) => `第 ${row} 行 · 剩 ${remaining} 颗`,
   },
+  canvas: {
+    cellLabel: (row: number, col: number) => `第 ${row} 行 · 第 ${col} 列`,
+  },
   toolbar: {
     color: "颜色",
     colorLabel: "选择颜色",
@@ -73,6 +76,12 @@ export const focus = {
     lineColorGray: "灰色",
     coordinates: "坐标标尺",
     coordinatesDesc: "在画布边缘显示行列编号",
+    gridLines: "细网格线",
+    gridLinesDesc: "显示每一格的分隔细线",
+    boardLines: "拼板边界线",
+    boardLinesDesc: "按实体拼板边数绘制粗边界",
+    boardLinesOff: "关闭",
+    boardLinesValue: (count: number) => `${count} 格`,
     celebration: "庆祝动画",
     celebrationDesc: "完成颜色时显示撒花效果",
     wakeLock: "屏幕常亮",
