@@ -31,6 +31,8 @@ export interface FocusProgressSettings {
   showGridLines?: boolean;
   /** 拼板边界线间隔（0=关闭，可选 52/78/104）；旧记录没有该字段 */
   boardInterval?: number;
+  /** 标记完成后若下一块不在视口内则自动定位；旧记录没有该字段，默认 true */
+  autoLocateNext?: boolean;
 }
 
 export interface FocusProgressRecord {

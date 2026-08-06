@@ -3,13 +3,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { MappedPixel } from '@/utils/pixelation';
 import {
-  getAllConnectedRegions,
   isRegionCompleted,
-  getRegionCenter,
-  sortRegionsByDistance,
-  sortRegionsBySize,
-  getConnectedRegion
+  getConnectedRegion,
+  pickRecommendedRegion
 } from '@/utils/floodFillUtils';
+import { computeLocateTransform, computeLocateTransformIfNeeded } from '@/utils/focusViewport';
 import FocusCanvas from '@/components/FocusCanvas';
 import ColorStatusBar from '@/components/ColorStatusBar';
 import RowStatusBar from '@/components/RowStatusBar';
@@ -133,6 +131,7 @@ interface FocusModeState {
   showGridLines: boolean; // 是否显示逐格细网格线
   boardInterval: number; // 拼板边界线间隔（0=关闭，可选 52/78/104）
   enableCelebration: boolean; // 是否启用庆祝动画
+  autoLocateNext: boolean; // 标记完成后若下一块不在视口内则自动定位
   wakeLockEnabled: boolean; // 是否在制作时保持屏幕常亮
   showCelebration: boolean; // 是否显示庆祝动画
   showCompletionCard: boolean; // 是否显示完成打卡图
@@ -197,6 +196,7 @@ export default function FocusPageClient() {
     showGridLines: false,
     boardInterval: 0,
     enableCelebration: true,
+    autoLocateNext: true,
     wakeLockEnabled: true,
     showCelebration: false,
     showCompletionCard: false
@@ -299,6 +299,7 @@ export default function FocusPageClient() {
             showSectionLines: restored.settings.showSectionLines,
             sectionLineColor: restored.settings.sectionLineColor,
             enableCelebration: restored.settings.enableCelebration,
+            autoLocateNext: restored.settings.autoLocateNext ?? true,
             progressMode: restored.settings.progressMode,
             showCoordinates: restored.settings.showCoordinates,
             wakeLockEnabled: restored.settings.wakeLockEnabled,
@@ -376,6 +377,7 @@ export default function FocusPageClient() {
           showSectionLines: focusState.showSectionLines,
           sectionLineColor: focusState.sectionLineColor,
           enableCelebration: focusState.enableCelebration,
+          autoLocateNext: focusState.autoLocateNext,
           progressMode: focusState.progressMode,
           showCoordinates: focusState.showCoordinates,
           wakeLockEnabled: focusState.wakeLockEnabled,
@@ -409,6 +411,7 @@ export default function FocusPageClient() {
     focusState.showSectionLines,
     focusState.sectionLineColor,
     focusState.enableCelebration,
+    focusState.autoLocateNext,
     focusState.progressMode,
     focusState.showCoordinates,
     focusState.wakeLockEnabled,
@@ -468,68 +471,18 @@ export default function FocusPageClient() {
   const calculateRecommendedRegion = useCallback(() => {
     if (!mappedPixelData || !focusState.currentColor) return { region: null, cell: null };
 
-    // 获取当前颜色的所有连通区域
-    const allRegions = getAllConnectedRegions(mappedPixelData, focusState.currentColor);
-
-    // 筛选出未完成的区域
-    const incompleteRegions = allRegions.filter(region =>
-      !isRegionCompleted(region, focusState.completedCells)
-    );
-
-    if (incompleteRegions.length === 0) {
-      return { region: null, cell: null };
-    }
-
-    let selectedRegion: { row: number; col: number }[];
-
-    // 根据引导模式选择推荐区域
-    switch (focusState.guidanceMode) {
-      case 'nearest':
-        // 找最近的区域（相对于上一个完成的格子或中心点）
-        const referencePoint = focusState.selectedCell ?? {
-          row: Math.floor(mappedPixelData.length / 2),
-          col: Math.floor(mappedPixelData[0].length / 2)
-        };
-
-        const sortedByDistance = sortRegionsByDistance(incompleteRegions, referencePoint);
-        selectedRegion = sortedByDistance[0];
-        break;
-
-      case 'largest':
-        // 找最大的连通区域
-        const sortedBySize = sortRegionsBySize(incompleteRegions);
-        selectedRegion = sortedBySize[0];
-        break;
-
-      case 'edge-first':
-        // 优先选择包含边缘格子的区域
-        const M = mappedPixelData.length;
-        const N = mappedPixelData[0].length;
-        const edgeRegions = incompleteRegions.filter(region =>
-          region.some(cell =>
-            cell.row === 0 || cell.row === M - 1 ||
-            cell.col === 0 || cell.col === N - 1
-          )
-        );
-
-        if (edgeRegions.length > 0) {
-          selectedRegion = edgeRegions[0];
-        } else {
-          selectedRegion = incompleteRegions[0];
-        }
-        break;
-
-      default:
-        selectedRegion = incompleteRegions[0];
-    }
-
-    // 计算区域中心作为推荐显示位置
-    const centerCell = getRegionCenter(selectedRegion);
-
-    return {
-      region: selectedRegion,
-      cell: centerCell
+    const referencePoint = focusState.selectedCell ?? {
+      row: Math.floor(mappedPixelData.length / 2),
+      col: Math.floor(mappedPixelData[0].length / 2)
     };
+
+    return pickRecommendedRegion(
+      mappedPixelData,
+      focusState.currentColor,
+      focusState.completedCells,
+      focusState.guidanceMode,
+      referencePoint
+    );
   }, [mappedPixelData, focusState.currentColor, focusState.completedCells, focusState.selectedCell, focusState.guidanceMode]);
 
   // 更新推荐区域
@@ -669,6 +622,64 @@ export default function FocusPageClient() {
   // 画布坐标读数文案（1 起始）；稳定引用避免每秒计时 tick 触发画布重绘
   const formatCellLabel = useCallback((row: number, col: number) => t.focus.canvas.cellLabel(row + 1, col + 1), [t]);
 
+  /** 标记完成后：用最新 completedCells 同步算出下一块，仅当其中心不在视口内时平移 */
+  const locateNextAfterMark = useCallback((
+    newCompletedCells: Set<string>,
+    referenceCell: { row: number; col: number },
+    options?: { nextRow?: number; nextColor?: string }
+  ) => {
+    if (!focusState.autoLocateNext || !gridDimensions || !mappedPixelData) return;
+
+    const isRow = focusState.progressMode === 'row';
+    let cells: { row: number; col: number }[] | null = null;
+
+    if (isRow) {
+      const row = options?.nextRow ?? focusState.currentRow;
+      cells = (mappedPixelData[row] ?? []).map((_, col) => ({ row, col }));
+    } else {
+      const color = options?.nextColor ?? focusState.currentColor;
+      const { region, cell } = pickRecommendedRegion(
+        mappedPixelData,
+        color,
+        newCompletedCells,
+        focusState.guidanceMode,
+        referenceCell
+      );
+      cells = region && region.length > 0 ? region : cell ? [cell] : null;
+    }
+
+    if (!cells || cells.length === 0) return;
+
+    const container = canvasContainerRef.current;
+    const next = computeLocateTransformIfNeeded(cells, {
+      N: gridDimensions.N,
+      M: gridDimensions.M,
+      showCoordinates: focusState.showCoordinates,
+      canvasScale: focusState.canvasScale,
+      canvasOffset: focusState.canvasOffset,
+      viewWidth: container?.clientWidth ?? 0,
+      viewHeight: container?.clientHeight ?? 0,
+    });
+    if (!next) return;
+
+    setFocusState(prev => ({
+      ...prev,
+      canvasScale: next.canvasScale,
+      canvasOffset: next.canvasOffset,
+    }));
+  }, [
+    focusState.autoLocateNext,
+    focusState.progressMode,
+    focusState.currentRow,
+    focusState.currentColor,
+    focusState.guidanceMode,
+    focusState.showCoordinates,
+    focusState.canvasScale,
+    focusState.canvasOffset,
+    gridDimensions,
+    mappedPixelData,
+  ]);
+
   // 处理格子点击 - 区域洪水填充标记
   // 逐色模式只响应当前色；逐行模式以被点格子自身的颜色标记
   const handleCellClick = useCallback((row: number, col: number) => {
@@ -697,19 +708,74 @@ export default function FocusPageClient() {
     const isCurrentlyCompleted = isRegionCompleted(region, focusState.completedCells);
 
     if (isCurrentlyCompleted) {
-      // 如果区域已完成，取消整个区域的完成状态
+      // 如果区域已完成，取消整个区域的完成状态（撤销不跳视角）
       region.forEach(({ row: r, col: c }) => {
         newCompletedCells.delete(`${r},${c}`);
       });
+      commitCompletedCells(newCompletedCells, targetColor, { row, col });
+      return;
+    }
+
+    // 标记整个区域为完成
+    region.forEach(({ row: r, col: c }) => {
+      newCompletedCells.add(`${r},${c}`);
+    });
+
+    // 同步预测提交后的下一引导目标（避免读到未 flush 的 recommendedRegion）
+    let nextRow: number | undefined;
+    let nextColor: string | undefined;
+    if (isRowMode) {
+      const rowDone =
+        countRowCompleted(mappedPixelData, focusState.currentRow, newCompletedCells) >=
+        countRowTotal(mappedPixelData, focusState.currentRow);
+      if (rowDone) {
+        nextRow = findFirstIncompleteRow(
+          mappedPixelData,
+          newCompletedCells,
+          Math.min(focusState.currentRow + 1, mappedPixelData.length - 1)
+        );
+      }
     } else {
-      // 如果区域未完成，标记整个区域为完成
-      region.forEach(({ row: r, col: c }) => {
-        newCompletedCells.add(`${r},${c}`);
-      });
+      const colorTotal = focusState.colorProgress[targetColor]?.total ?? 0;
+      const colorCompleted = Array.from(newCompletedCells).filter((key) => {
+        const [r, c] = key.split(',').map(Number);
+        return mappedPixelData[r]?.[c]?.color === targetColor;
+      }).length;
+      if (colorTotal > 0 && colorCompleted >= colorTotal) {
+        // 当前色刚拼完：若会立刻切色（庆祝关闭），定位到下一色；否则暂无下一推荐
+        if (!focusState.enableCelebration) {
+          const currentIndex = colorTotals.findIndex(color => color.color === focusState.currentColor);
+          for (let i = 1; currentIndex !== -1 && i < colorTotals.length; i++) {
+            const candidate = colorTotals[(currentIndex + i) % colorTotals.length];
+            const done = Array.from(newCompletedCells).filter((key) => {
+              const [r, c] = key.split(',').map(Number);
+              return mappedPixelData[r]?.[c]?.color === candidate.color;
+            }).length;
+            if (done < candidate.total) {
+              nextColor = candidate.color;
+              break;
+            }
+          }
+        }
+      }
     }
 
     commitCompletedCells(newCompletedCells, targetColor, { row, col });
-  }, [mappedPixelData, focusState.progressMode, focusState.currentColor, focusState.completedCells, commitCompletedCells, colorTotals, showToast, t]);
+    locateNextAfterMark(newCompletedCells, { row, col }, { nextRow, nextColor });
+  }, [
+    mappedPixelData,
+    focusState.progressMode,
+    focusState.currentColor,
+    focusState.completedCells,
+    focusState.currentRow,
+    focusState.colorProgress,
+    focusState.enableCelebration,
+    commitCompletedCells,
+    locateNextAfterMark,
+    colorTotals,
+    showToast,
+    t,
+  ]);
 
   // 一键完成/撤销当前颜色（逐色模式）：整色标记或整色取消
   const handleToggleCurrentColorComplete = useCallback(() => {
@@ -780,60 +846,24 @@ export default function FocusPageClient() {
       return;
     }
 
-    // 目标区域的包围盒
-    let minRow = Infinity, maxRow = -Infinity, minCol = Infinity, maxCol = -Infinity;
-    cells.forEach(({ row, col }) => {
-      minRow = Math.min(minRow, row);
-      maxRow = Math.max(maxRow, row);
-      minCol = Math.min(minCol, col);
-      maxCol = Math.max(maxCol, col);
-    });
-
-    // 与 FocusCanvas 一致的尺寸计算（含坐标标尺边距）
-    const cellSize = Math.max(15, Math.min(40, 300 / Math.max(gridDimensions.N, gridDimensions.M)));
-    const coordLeft = focusState.showCoordinates ? 18 : 0;
-    const coordTop = focusState.showCoordinates ? 14 : 0;
-    const canvasWidth = coordLeft + gridDimensions.N * cellSize;
-    const canvasHeight = coordTop + gridDimensions.M * cellSize;
-
     const container = canvasContainerRef.current;
-    const viewWidth = container?.clientWidth ?? 0;
-    const viewHeight = container?.clientHeight ?? 0;
-
-    // 区域超过视口 70% 时回落缩放（只缩不放），保证定位后整个区域可见
-    let scale = focusState.canvasScale;
-    if (viewWidth > 0 && viewHeight > 0) {
-      const regionWidth = (maxCol - minCol + 1) * cellSize;
-      const regionHeight = (maxRow - minRow + 1) * cellSize;
-      const fitScale = Math.min((viewWidth * 0.7) / regionWidth, (viewHeight * 0.7) / regionHeight);
-      if (fitScale < scale) {
-        scale = Math.max(0.3, fitScale);
-      }
-    }
-
-    // 目标区域中心（未缩放画布坐标）；CSS transform 为 scale 后 translate，故偏移与缩放无关
-    const targetX = ((minCol + maxCol + 1) / 2) * cellSize;
-    const targetY = ((minRow + maxRow + 1) / 2) * cellSize;
-    let offsetX = canvasWidth / 2 - targetX;
-    let offsetY = canvasHeight / 2 - targetY;
-
-    // 钳制：图纸任何方向不得被拖出视口超过 75%
-    if (viewWidth > 0 && viewHeight > 0) {
-      const clampOffset = (offset: number, canvasSize: number, viewSize: number) => {
-        const minOffset = -viewSize / (2 * scale) - canvasSize * 0.25;
-        const maxOffset = viewSize / (2 * scale) + canvasSize * 0.25;
-        return Math.min(maxOffset, Math.max(minOffset, offset));
-      };
-      offsetX = clampOffset(offsetX, canvasWidth, viewWidth);
-      offsetY = clampOffset(offsetY, canvasHeight, viewHeight);
-    }
+    const next = computeLocateTransform(cells, {
+      N: gridDimensions.N,
+      M: gridDimensions.M,
+      showCoordinates: focusState.showCoordinates,
+      canvasScale: focusState.canvasScale,
+      canvasOffset: focusState.canvasOffset,
+      viewWidth: container?.clientWidth ?? 0,
+      viewHeight: container?.clientHeight ?? 0,
+    });
+    if (!next) return;
 
     setFocusState(prev => ({
       ...prev,
-      canvasScale: scale,
-      canvasOffset: { x: offsetX, y: offsetY }
+      canvasScale: next.canvasScale,
+      canvasOffset: next.canvasOffset,
     }));
-  }, [focusState.progressMode, focusState.currentRow, focusState.recommendedCell, focusState.recommendedRegion, focusState.canvasScale, focusState.showCoordinates, gridDimensions, mappedPixelData, showToast, t]);
+  }, [focusState.progressMode, focusState.currentRow, focusState.recommendedCell, focusState.recommendedRegion, focusState.canvasScale, focusState.canvasOffset, focusState.showCoordinates, gridDimensions, mappedPixelData, showToast, t]);
 
   // 格式化时间显示
   const formatTime = useCallback((seconds: number): string => {
@@ -889,6 +919,7 @@ export default function FocusPageClient() {
         showSectionLines: focusState.showSectionLines,
         sectionLineColor: focusState.sectionLineColor,
         enableCelebration: focusState.enableCelebration,
+        autoLocateNext: focusState.autoLocateNext,
         progressMode: focusState.progressMode,
         showCoordinates: focusState.showCoordinates,
         wakeLockEnabled: focusState.wakeLockEnabled,
@@ -1168,6 +1199,8 @@ export default function FocusPageClient() {
         onSectionLineColorChange={(color: string) => setFocusState(prev => ({ ...prev, sectionLineColor: color }))}
         enableCelebration={focusState.enableCelebration}
         onEnableCelebrationChange={(enable: boolean) => setFocusState(prev => ({ ...prev, enableCelebration: enable }))}
+        autoLocateNext={focusState.autoLocateNext}
+        onAutoLocateNextChange={(enable: boolean) => setFocusState(prev => ({ ...prev, autoLocateNext: enable }))}
         showCoordinates={focusState.showCoordinates}
         onShowCoordinatesChange={(show: boolean) => setFocusState(prev => ({ ...prev, showCoordinates: show }))}
         showGridLines={focusState.showGridLines}

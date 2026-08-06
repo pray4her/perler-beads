@@ -21,6 +21,8 @@ interface SettingsPanelProps {
   onSectionLineColorChange: (color: string) => void;
   enableCelebration: boolean;
   onEnableCelebrationChange: (enable: boolean) => void;
+  autoLocateNext: boolean;
+  onAutoLocateNextChange: (enable: boolean) => void;
   showCoordinates: boolean;
   onShowCoordinatesChange: (show: boolean) => void;
   showGridLines: boolean;
@@ -46,6 +48,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onSectionLineColorChange,
   enableCelebration,
   onEnableCelebrationChange,
+  autoLocateNext,
+  onAutoLocateNextChange,
   showCoordinates,
   onShowCoordinatesChange,
   showGridLines,
@@ -122,6 +126,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   <div className="text-sm font-medium text-foreground">{t.focus.settings.guidanceEdgeFirst}</div>
                   <div className="text-xs text-muted-foreground">{t.focus.settings.guidanceEdgeFirstDesc}</div>
                 </div>
+              </label>
+
+              <label className="flex items-center justify-between pt-1">
+                <div>
+                  <div className="text-sm font-medium text-foreground">{t.focus.settings.autoLocateNext}</div>
+                  <div className="text-xs text-muted-foreground">{t.focus.settings.autoLocateNextDesc}</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={autoLocateNext}
+                  onChange={(e) => onAutoLocateNextChange(e.target.checked)}
+                  className="h-4 w-4 accent-primary rounded"
+                />
               </label>
             </div>
           </div>

@@ -142,4 +142,58 @@ export function sortRegionsBySize(
   regions: { row: number; col: number }[][]
 ): { row: number; col: number }[][] {
   return regions.sort((a, b) => b.length - a.length);
-} 
+}
+
+/** 按引导策略选出下一块未完成连通区域（纯函数，可供标记后同步定位） */
+export function pickRecommendedRegion(
+  mappedPixelData: MappedPixel[][],
+  currentColor: string,
+  completedCells: Set<string>,
+  guidanceMode: "nearest" | "largest" | "edge-first",
+  referencePoint: { row: number; col: number }
+): {
+  region: { row: number; col: number }[] | null;
+  cell: { row: number; col: number } | null;
+} {
+  if (!currentColor) return { region: null, cell: null };
+
+  const allRegions = getAllConnectedRegions(mappedPixelData, currentColor);
+  const incompleteRegions = allRegions.filter(
+    (region) => !isRegionCompleted(region, completedCells)
+  );
+  if (incompleteRegions.length === 0) {
+    return { region: null, cell: null };
+  }
+
+  let selectedRegion: { row: number; col: number }[];
+  switch (guidanceMode) {
+    case "nearest":
+      selectedRegion = sortRegionsByDistance(incompleteRegions, referencePoint)[0];
+      break;
+    case "largest":
+      selectedRegion = sortRegionsBySize(incompleteRegions)[0];
+      break;
+    case "edge-first": {
+      const M = mappedPixelData.length;
+      const N = mappedPixelData[0].length;
+      const edgeRegions = incompleteRegions.filter((region) =>
+        region.some(
+          (cell) =>
+            cell.row === 0 ||
+            cell.row === M - 1 ||
+            cell.col === 0 ||
+            cell.col === N - 1
+        )
+      );
+      selectedRegion = edgeRegions.length > 0 ? edgeRegions[0] : incompleteRegions[0];
+      break;
+    }
+    default:
+      selectedRegion = incompleteRegions[0];
+  }
+
+  return {
+    region: selectedRegion,
+    cell: getRegionCenter(selectedRegion),
+  };
+}

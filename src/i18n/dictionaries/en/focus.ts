@@ -89,6 +89,8 @@ export const focus: typeof focusZh = {
     boardLinesValue: (count: number) => `${count} cells`,
     celebration: "Celebration animation",
     celebrationDesc: "Show confetti when a color is finished",
+    autoLocateNext: "Auto-pan after mark",
+    autoLocateNextDesc: "After marking, jump to the next region only if it’s off-screen",
     wakeLock: "Keep screen on",
     wakeLockDesc: "Prevent the screen from sleeping while you bead",
     dataTitle: "Data",

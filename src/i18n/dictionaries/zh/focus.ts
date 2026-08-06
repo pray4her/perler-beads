@@ -84,6 +84,8 @@ export const focus = {
     boardLinesValue: (count: number) => `${count} 格`,
     celebration: "庆祝动画",
     celebrationDesc: "完成颜色时显示撒花效果",
+    autoLocateNext: "完成后续跳",
+    autoLocateNextDesc: "标记完成后，若下一块不在视野内则自动定位",
     wakeLock: "屏幕常亮",
     wakeLockDesc: "制作时防止屏幕自动熄灭",
     dataTitle: "数据管理",
