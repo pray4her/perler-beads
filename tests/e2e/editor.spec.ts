@@ -2,6 +2,39 @@ import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import sharp from "sharp";
 
+async function chooseHomeFile(
+  page: import("@playwright/test").Page,
+  file: { name: string; mimeType: string; buffer: Buffer },
+) {
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "上传图片", exact: true }).first().click();
+  await (await chooser).setFiles(file);
+}
+
+async function openMobileInspector(page: import("@playwright/test").Page, projectName: string) {
+  if (projectName === "mobile") {
+    await page.getByRole("button", { name: "面板", exact: true }).click();
+  }
+}
+
+async function closeMobileInspector(page: import("@playwright/test").Page, projectName: string) {
+  if (projectName === "mobile") {
+    await page.getByRole("button", { name: "检查器", exact: true }).click({ position: { x: 8, y: 8 } });
+  }
+}
+
+async function clickEditorAction(
+  page: import("@playwright/test").Page,
+  projectName: string,
+  name: string,
+) {
+  const action = page.getByRole("button", { name, exact: true });
+  if (projectName === "mobile" && !await action.isVisible()) {
+    await page.getByRole("button", { name: "更多", exact: true }).click();
+  }
+  await action.click();
+}
+
 test("home page has no serious accessibility violations", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveTitle("拼豆底稿生成器 - 把图片变成能照着拼的拼豆图纸");
@@ -16,7 +49,7 @@ test("home page has no serious accessibility violations", async ({ page }) => {
   expect(results.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
 });
 
-test("sample opens the keyboard-accessible editor and updates preview text", async ({ page }) => {
+test("sample opens the keyboard-accessible editor and updates preview text", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "载入示例", exact: true }).click();
   const grid = page.getByRole("grid", { name: "可编辑拼豆网格", exact: true });
@@ -25,12 +58,15 @@ test("sample opens the keyboard-accessible editor and updates preview text", asy
   await grid.focus();
   await grid.press("ArrowRight");
   await grid.press("Enter");
-  await expect(page.getByRole("button", { name: "上一步", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "生成参数", exact: true }).click();
+  if (testInfo.project.name !== "mobile") {
+    await expect(page.getByRole("status")).toContainText("键盘绘制");
+  }
+  await clickEditorAction(page, testInfo.project.name, "生成参数");
   await expect(page.getByRole("heading", { name: "调整生成参数", exact: true })).toBeVisible();
   await expect(page.getByLabel("横轴切割数量", { exact: true })).toHaveValue("48");
   await expect(page.getByRole("button", { name: "应用并重新生成", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
+  await openMobileInspector(page, testInfo.project.name);
   await page.getByRole("tab", { name: "预览", exact: true }).click();
   const title = page.getByLabel("作品标题", { exact: true });
   await title.fill("我的拼豆作品");
@@ -93,9 +129,18 @@ test("export center prioritizes the making sheet and keeps making options togeth
   const pdfFile = await pdfDownload;
   expect(pdfFile.suggestedFilename()).toMatch(/制作底稿-A3\.pdf$/);
 
+  const csvDownload = page.waitForEvent("download");
+  await exportSheet.getByRole("button", { name: "色号网格 CSV", exact: true }).click();
+  expect((await csvDownload).suggestedFilename()).toMatch(/色号网格\.csv$/);
+
+  const projectDownload = page.waitForEvent("download");
+  await exportSheet.getByRole("button", { name: "可编辑项目 .perler", exact: true }).click();
+  expect((await projectDownload).suggestedFilename()).toMatch(/可编辑项目\.perler$/);
+
   await page.screenshot({ path: testInfo.outputPath("export-center.png"), fullPage: true });
   await exportSheet.getByRole("button", { name: "编辑展示样式", exact: true }).click();
   await expect(page.getByRole("tab", { name: "预览", exact: true })).toHaveAttribute("aria-selected", "true");
+  await closeMobileInspector(page, testInfo.project.name);
   await page.getByRole("button", { name: "导出", exact: true }).click();
   await exportSheet.locator(".overflow-y-auto").evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(closeExport).toBeVisible();
@@ -104,12 +149,14 @@ test("export center prioritizes the making sheet and keeps making options togeth
   await expect(page.getByRole("button", { name: "导出", exact: true })).toBeFocused();
 });
 
-test("export center explains why an empty canvas cannot be downloaded", async ({ page }) => {
+test("export center explains why an empty canvas cannot be downloaded", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "载入示例", exact: true }).click();
+  await openMobileInspector(page, testInfo.project.name);
   await page.getByRole("tab", { name: "选择", exact: true }).click();
   await page.getByRole("button", { name: "非透明内容", exact: true }).click();
   await page.getByRole("button", { name: "删除", exact: true }).click();
+  await closeMobileInspector(page, testInfo.project.name);
   await page.getByRole("button", { name: "导出", exact: true }).click();
 
   const exportSheet = page.getByRole("dialog", { name: "导出作品", exact: true });
@@ -124,9 +171,7 @@ test("color-code CSV v2 and legacy HEX CSV both import in the editor", async ({ 
     void dialog.accept();
   });
   await page.goto("/");
-  const fileInput = page.locator('input[type="file"]').first();
-
-  await fileInput.setInputFiles({
+  await chooseHomeFile(page, {
     name: "color-codes-v2.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(["format,version,colorSystem,width,height", "perler-pattern,2,MARD,2,2", "grid", "A01,", "B01,A01"].join("\n")),
@@ -134,7 +179,8 @@ test("color-code CSV v2 and legacy HEX CSV both import in the editor", async ({ 
   await expect(page.getByRole("grid", { name: "可编辑拼豆网格", exact: true })).toBeVisible();
   await expect.poll(() => importMessages.at(-1)).toContain("成功导入色号网格 CSV");
 
-  await fileInput.setInputFiles({
+  await page.goto("/");
+  await chooseHomeFile(page, {
     name: "legacy-hex.csv",
     mimeType: "text/csv",
     buffer: Buffer.from("#FF0000,TRANSPARENT\n,#00FF00"),
@@ -142,11 +188,56 @@ test("color-code CSV v2 and legacy HEX CSV both import in the editor", async ({ 
   await expect.poll(() => importMessages.at(-1)).toContain("成功导入历史 HEX CSV");
 });
 
-test("finishing the editor returns home without discarding the current pattern", async ({ page }) => {
+test("project, reference, and palette file choosers use transient inputs", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "mobile", "Desktop coverage exercises all three transient chooser intents.");
+  const dialogs: string[] = [];
+  page.on("dialog", (dialog) => {
+    dialogs.push(dialog.message());
+    void dialog.accept();
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "载入示例", exact: true }).click();
+
+  await page.getByRole("button", { name: "导出", exact: true }).click();
+  const exportSheet = page.getByRole("dialog", { name: "导出作品", exact: true });
+  const projectDownload = page.waitForEvent("download");
+  await exportSheet.getByRole("button", { name: "可编辑项目 .perler", exact: true }).click();
+  const projectPath = await (await projectDownload).path();
+  expect(projectPath).not.toBeNull();
+  await exportSheet.getByRole("button", { name: "关闭导出面板", exact: true }).click();
+
+  await page.getByRole("tab", { name: "制作", exact: true }).click();
+  const projectChooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "导入 .perler", exact: true }).click();
+  await (await projectChooser).setFiles(projectPath!);
+  await expect(page.getByRole("grid", { name: "可编辑拼豆网格", exact: true })).toBeVisible();
+
+  const referenceImage = await sharp({
+    create: { width: 8, height: 8, channels: 4, background: "#C84343" },
+  }).png().toBuffer();
+  const referenceChooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "选择参考图", exact: true }).click();
+  await (await referenceChooser).setFiles({ name: "reference.png", mimeType: "image/png", buffer: referenceImage });
+
+  await page.getByRole("button", { name: "色板", exact: true }).click();
+  const paletteChooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "导入配置", exact: true }).click();
+  await (await paletteChooser).setFiles({
+    name: "palette.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify({ selectedHexValues: ["#FFFFFF"] })),
+  });
+  await expect.poll(() => dialogs.at(-1)).toContain("成功导入 1 个颜色");
+  const paletteDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出配置", exact: true }).click();
+  expect((await paletteDownload).suggestedFilename()).toBe("custom-perler-palette.json");
+});
+
+test("finishing the editor returns home without discarding the current pattern", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "载入示例", exact: true }).click();
   await expect(page.getByRole("grid", { name: "可编辑拼豆网格", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "完成", exact: true }).click();
+  await clickEditorAction(page, testInfo.project.name, "返回首页");
   const hero = page.locator(".home-hero");
   await expect(hero.getByRole("button", { name: "继续当前底稿", exact: true })).toBeVisible();
   await hero.getByRole("button", { name: "继续当前底稿", exact: true }).click();
@@ -172,7 +263,7 @@ test("bitmap import automatically cleans a confident background and expires undo
   await page.goto("/");
 
   // When: the bitmap is imported, confirmed, and automatically converted to a pattern.
-  await page.locator('input[type="file"][accept*="image/jpeg"]').setInputFiles({
+  await chooseHomeFile(page, {
     name: "confident-background.png",
     mimeType: "image/png",
     buffer: image,
@@ -191,6 +282,6 @@ test("bitmap import automatically cleans a confident background and expires undo
   await grid.press("ArrowRight");
   await grid.press("Enter");
   await expect(cleanupStatus).toHaveCount(0);
-  await page.getByRole("button", { name: "生成参数", exact: true }).click();
+  await clickEditorAction(page, testInfo.project.name, "生成参数");
   await expect(page.getByRole("button", { name: "回撤去背景", exact: true })).toBeDisabled();
 });

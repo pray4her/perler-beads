@@ -15,7 +15,7 @@ interface ArchiveManifest {
   format: "perler-project";
   version: 1;
   document: Omit<EditorDocumentV1, "cells" | "baseline" | "reference" | "stamps"> & {
-    reference?: Omit<NonNullable<EditorDocumentV1["reference"]>, "blob">;
+    reference?: Omit<NonNullable<EditorDocumentV1["reference"]>, "data">;
   };
 }
 
@@ -29,7 +29,7 @@ function bytesToUint16(bytes: Uint8Array) {
   return new Uint16Array(copy.buffer);
 }
 
-export async function exportPerlerProject(document: EditorDocumentV1, thumbnail?: Blob): Promise<Blob> {
+export async function exportPerlerProject(document: EditorDocumentV1, thumbnail?: Uint8Array): Promise<Uint8Array> {
   const { zip } = await import("fflate");
   const encoder = new TextEncoder();
   const source = cloneEditorDocument(document);
@@ -55,17 +55,16 @@ export async function exportPerlerProject(document: EditorDocumentV1, thumbnail?
     "stamps.json": encoder.encode(JSON.stringify(source.stamps.map((stamp) => ({ ...stamp, cells: Array.from(stamp.cells) })))),
   };
   if (source.baseline) entries["baseline.bin"] = uint16ToBytes(source.baseline);
-  if (source.reference?.blob) entries["reference.bin"] = new Uint8Array(await source.reference.blob.arrayBuffer());
-  if (thumbnail) entries["thumbnail.webp"] = new Uint8Array(await thumbnail.arrayBuffer());
+  if (source.reference?.data) entries["reference.bin"] = source.reference.data.slice();
+  if (thumbnail) entries["thumbnail.webp"] = thumbnail.slice();
   const bytes = await new Promise<Uint8Array>((resolve, reject) => {
     zip(entries, { level: 6 }, (error, data) => error ? reject(error) : resolve(data));
   });
-  return new Blob([bytes as BlobPart], { type: "application/x-perler-project" });
+  return bytes;
 }
 
-export async function importPerlerProject(file: Blob): Promise<EditorDocumentV1> {
+export async function importPerlerProject(compressed: Uint8Array): Promise<EditorDocumentV1> {
   const { unzip } = await import("fflate");
-  const compressed = new Uint8Array(await file.arrayBuffer());
   const entries = await new Promise<Record<string, Uint8Array>>((resolve, reject) => {
     unzip(compressed, (error, data) => error ? reject(error) : resolve(data));
   });
@@ -97,26 +96,13 @@ export async function importPerlerProject(file: Blob): Promise<EditorDocumentV1>
   const stampsData = entries["stamps.json"]
     ? JSON.parse(new TextDecoder().decode(entries["stamps.json"])) as Array<{ id: string; name: string; width: number; height: number; cells: number[] }>
     : [];
-  const referenceBlob = entries["reference.bin"]
-    ? new Blob([entries["reference.bin"] as BlobPart], { type: metadata.reference?.mimeType || "application/octet-stream" })
-    : undefined;
+  const referenceData = entries["reference.bin"]?.slice();
   return {
     ...metadata,
     version: EDITOR_DOCUMENT_VERSION,
     cells,
     baseline: entries["baseline.bin"] ? bytesToUint16(entries["baseline.bin"]) : undefined,
-    reference: metadata.reference ? { ...metadata.reference, blob: referenceBlob } : undefined,
+    reference: metadata.reference ? { ...metadata.reference, data: referenceData } : undefined,
     stamps: stampsData.map((stamp) => ({ ...stamp, cells: Uint16Array.from(stamp.cells) })),
   };
-}
-
-export function downloadBlob(blob: Blob, fileName: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }

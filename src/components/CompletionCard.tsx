@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { MappedPixel } from '../utils/pixelation';
 import { useT } from '@/i18n/context';
+import { webPlatform } from '@/platform/web';
 
 interface CompletionCardProps {
   isVisible: boolean;
@@ -399,10 +400,12 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
   const downloadCard = async () => {
     const cardDataURL = await generateCompletionCard();
     if (cardDataURL) {
-      const link = document.createElement('a');
-      link.download = t.focus.completion.cardFileName(new Date().toLocaleDateString());
-      link.href = cardDataURL;
-      link.click();
+      const artifact = await webPlatform.artifacts.createFromDataUrl(cardDataURL);
+      try {
+        await webPlatform.artifacts.save(artifact, t.focus.completion.cardFileName(new Date().toLocaleDateString()));
+      } finally {
+        webPlatform.artifacts.release(artifact);
+      }
     }
   };
 
@@ -411,21 +414,21 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
     const cardDataURL = await generateCompletionCard();
     if (!cardDataURL) return;
     const fileName = t.focus.completion.cardFileName(new Date().toLocaleDateString());
+    const artifact = await webPlatform.artifacts.createFromDataUrl(cardDataURL);
     try {
-      const blob = await (await fetch(cardDataURL)).blob();
-      const file = new File([blob], fileName, { type: 'image/jpeg' });
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: t.focus.completion.title });
-        return;
-      }
+      if (await webPlatform.artifacts.share(artifact, fileName, t.focus.completion.title)) return;
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
+    } finally {
+      webPlatform.artifacts.release(artifact);
     }
     // 不支持或分享失败：回退到下载
-    const link = document.createElement('a');
-    link.download = fileName;
-    link.href = cardDataURL;
-    link.click();
+    const fallback = await webPlatform.artifacts.createFromDataUrl(cardDataURL);
+    try {
+      await webPlatform.artifacts.save(fallback, fileName);
+    } finally {
+      webPlatform.artifacts.release(fallback);
+    }
   };
 
   // 仅在支持 Web Share API 的环境显示分享按钮
@@ -560,4 +563,4 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
   );
 };
 
-export default CompletionCard; 
+export default CompletionCard;

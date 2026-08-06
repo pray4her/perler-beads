@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { PaletteColor } from '../utils/pixelation';
-import { PaletteSelections } from '../utils/localStorageUtils';
+import type { PaletteSelections } from "@/editor/paletteSettings";
 import { getDisplayColorKey, ColorSystem } from '../utils/colorSystemUtils';
 import { useT } from '@/i18n/context';
 
@@ -312,4 +312,4 @@ const CustomPaletteEditor: React.FC<CustomPaletteEditorProps> = ({
   );
 };
 
-export default CustomPaletteEditor; 
+export default CustomPaletteEditor;

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, ChangeEvent, useEffect, useMemo, useCallback, startTransition } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, startTransition } from 'react';
 import HomeLanding from '@/components/HomeLanding';
 import SupportRail from '@/components/SupportRail';
 import ImagePrepareOverlay from '@/components/ImagePrepareOverlay';
@@ -49,7 +49,8 @@ const fullBeadPalette: PaletteColor[] = Object.entries(mardToHexMapping)
 // 1. 导入新组件
 import GridTooltip from '@/components/GridTooltip';
 import CustomPaletteEditor from '@/components/CustomPaletteEditor';
-import { loadPaletteSelections, savePaletteSelections, presetToSelections, PaletteSelections } from '@/utils/localStorageUtils';
+import { presetToSelections } from '@/editor/palettePresets';
+import type { PaletteSelections } from '@/editor/paletteSettings';
 import { recalculateColorStats } from '@/utils/pixelEditingUtils';
 import {
   removeExternalBackground,
@@ -58,8 +59,9 @@ import PixelEditorWorkspace from '@/components/PixelEditorWorkspace';
 import { createEditorDocument, editorDocumentToGrid } from '@/editor/document';
 import { useLanguage } from '@/i18n/context';
 import { canonicalFocusPath } from '@/i18n/site';
-import { listProjects, loadProject } from '@/editor/projectStorage';
 import type { EditorCommitResult } from '@/editor/types';
+import type { SelectedFileRef } from '@/platform/contracts';
+import { webPlatform } from '@/platform/web';
 
 type EditSnapshot = {
   readonly mappedPixelData: MappedPixel[][];
@@ -172,9 +174,9 @@ export default function HomePageClient() {
 
   const originalCanvasRef = useRef<HTMLCanvasElement>(null);
   const pixelatedCanvasRef = useRef<HTMLCanvasElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // ++ 添加: Ref for import file input ++
-  const importPaletteInputRef = useRef<HTMLInputElement>(null);
+
   //const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   // ++ Re-add touch refs needed for tooltip logic ++
   //const touchStartPosRef = useRef<{ x: number; y: number; pageX: number; pageY: number } | null>(null);
@@ -239,94 +241,42 @@ export default function HomePageClient() {
     return sortColorsByHue(colorData);
   }, [mappedPixelData, selectedColorSystem]);
 
-  // 初始化时从本地存储加载自定义色板选择
   useEffect(() => {
-    // 尝试从localStorage加载
-    const savedSelections = loadPaletteSelections();
-    if (savedSelections && Object.keys(savedSelections).length > 0) {
-      console.log('从localStorage加载的数据键数量:', Object.keys(savedSelections).length);
-      // 验证加载的数据是否都是有效的hex值
-      const allHexValues = fullBeadPalette.map(color => color.hex.toUpperCase());
+    let cancelled = false;
+    void webPlatform.persistence.loadPaletteSelections().then(async (savedSelections) => {
+      if (cancelled) return;
+      const allHexValues = fullBeadPalette.map((color) => color.hex.toUpperCase());
       const validSelections: PaletteSelections = {};
-      let hasValidData = false;
-      let validCount = 0;
-      let invalidCount = 0;
-      
-      Object.entries(savedSelections).forEach(([key, value]) => {
-        // 严格验证：键必须是有效的hex格式，并且存在于调色板中
+      for (const [key, value] of Object.entries(savedSelections ?? {})) {
         if (/^#[0-9A-F]{6}$/i.test(key) && allHexValues.includes(key.toUpperCase())) {
           validSelections[key.toUpperCase()] = value;
-          hasValidData = true;
-          validCount++;
-        } else {
-          invalidCount++;
         }
-      });
-      
-      console.log(`验证结果: 有效键 ${validCount} 个, 无效键 ${invalidCount} 个`);
-      
-      if (hasValidData) {
+      }
+      if (Object.keys(validSelections).length > 0) {
         setCustomPaletteSelections(validSelections);
-    setIsCustomPalette(true);
-    } else {
-        console.log('所有数据都无效，清除localStorage并重新初始化');
-        // 如果本地数据无效，清除localStorage并默认选择所有颜色
-        localStorage.removeItem('customPerlerPaletteSelections');
-        const allHexValues = fullBeadPalette.map(color => color.hex.toUpperCase());
-        const initialSelections = presetToSelections(allHexValues, allHexValues);
-      setCustomPaletteSelections(initialSelections);
+        setIsCustomPalette(true);
+        return;
+      }
+      if (savedSelections) await webPlatform.persistence.clearPaletteSelections();
+      setCustomPaletteSelections(presetToSelections(allHexValues, allHexValues));
       setIsCustomPalette(false);
-    }
-    } else {
-      console.log('没有localStorage数据，默认选择所有颜色');
-      // 如果没有保存的选择，默认选择所有颜色
-      const allHexValues = fullBeadPalette.map(color => color.hex.toUpperCase());
-      const initialSelections = presetToSelections(allHexValues, allHexValues);
-      setCustomPaletteSelections(initialSelections);
+    }).catch((error) => {
+      console.error("Unable to load palette selections:", error);
+      if (cancelled) return;
+      const allHexValues = fullBeadPalette.map((color) => color.hex.toUpperCase());
+      setCustomPaletteSelections(presetToSelections(allHexValues, allHexValues));
       setIsCustomPalette(false);
-    }
-  }, []); // 只在组件首次加载时执行
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // --- Event Handlers ---
 
-  // 添加一个安全的文件输入触发函数
-  const triggerFileInput = useCallback(() => {
-    // 检查组件是否已挂载
-    if (!isMounted) {
-      console.warn("组件尚未完全挂载，延迟触发文件选择");
-      setTimeout(() => triggerFileInput(), 200);
-      return;
-    }
-    
-    // 检查 ref 是否存在
-    if (fileInputRef.current) {
-      try {
-        fileInputRef.current.click();
-      } catch (error) {
-        console.error("触发文件选择失败:", error);
-        // 如果直接点击失败，尝试延迟执行
-        setTimeout(() => {
-          try {
-            fileInputRef.current?.click();
-          } catch (retryError) {
-            console.error("重试触发文件选择失败:", retryError);
-          }
-        }, 100);
-      }
-    } else {
-      // 如果 ref 不存在，延迟重试
-      console.warn("文件输入引用不存在，将在100ms后重试");
-      setTimeout(() => {
-        if (fileInputRef.current) {
-          try {
-            fileInputRef.current.click();
-          } catch (error) {
-            console.error("延迟触发文件选择失败:", error);
-          }
-        }
-      }, 100);
-    }
-  }, [isMounted]);
+  const triggerFileInput = () => {
+    void webPlatform.files.select("source").then((file) => {
+      if (file) processFile(file);
+    }).catch((error) => console.error("Unable to select a source file:", error));
+  };
 
   const loadExampleImage = useCallback(() => {
     automaticBackgroundCleanupEnabledRef.current = false;
@@ -344,12 +294,10 @@ export default function HomePageClient() {
     setRemapTrigger((value) => value + 1);
   }, []);
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
+  const processFile = (file: SelectedFileRef) => {
       // 检查文件类型是否支持
       const fileName = file.name.toLowerCase();
-      const fileType = file.type.toLowerCase();
+      const fileType = file.mimeType.toLowerCase();
       
       // 支持的图片类型
       const supportedImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
@@ -361,16 +309,11 @@ export default function HomePageClient() {
 
       if (isImageFile || isCsvFile) {
         setExcludedColorKeys(new Set()); // ++ 重置排除列表 ++
-        processFile(file);
+        void processSelectedFile(file);
       } else {
-        alert(t.home.alerts.unsupportedFileType(file.type || t.home.common.unknownFileType, file.name));
-        console.warn(`Unsupported file type: ${file.type}, file name: ${file.name}`);
+        alert(t.home.alerts.unsupportedFileType(file.mimeType || t.home.common.unknownFileType, file.name));
+        console.warn(`Unsupported file type: ${file.mimeType}, file name: ${file.name}`);
       }
-    }
-    // 重置文件输入框的值，这样用户可以重新选择同一个文件
-    if (event.target) {
-      event.target.value = '';
-    }
   };
 
   // 根据mappedPixelData生成合成的originalImageSrc
@@ -434,13 +377,13 @@ export default function HomePageClient() {
     setRemapTrigger((prev) => prev + 1);
   };
 
-  const processFile = (file: File) => {
+  const processSelectedFile = async (file: SelectedFileRef) => {
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
 
     if (fileExtension === 'csv') {
       automaticBackgroundCleanupEnabledRef.current = false;
       console.log('正在导入CSV文件...');
-      void file.text()
+      void webPlatform.files.readText(file)
         .then((source) => parsePatternCsv(source))
         .then((result) => {
           if (result.kind === "error") {
@@ -476,36 +419,12 @@ export default function HomePageClient() {
           alert(t.home.alerts.csvImportFailed(message));
         });
     } else {
-      const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
-
-      if (isGif) {
-        createImageBitmap(file)
-          .then((bitmap) => {
-            const canvas = document.createElement('canvas');
-            canvas.width = bitmap.width;
-            canvas.height = bitmap.height;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) throw new Error('无法创建 Canvas 上下文');
-            ctx.drawImage(bitmap, 0, 0);
-            bitmap.close();
-            openImagePrepare(canvas.toDataURL('image/png'));
-          })
-          .catch((error) => {
-            console.error('GIF 处理失败:', error);
-            alert(t.home.alerts.gifReadFailed);
-            setInitialGridColorKeys(new Set());
-          });
-      } else {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          openImagePrepare(e.target?.result as string);
-        };
-        reader.onerror = () => {
-          console.error("文件读取失败");
-          alert(t.home.alerts.fileReadFailed);
-          setInitialGridColorKeys(new Set());
-        };
-        reader.readAsDataURL(file);
+      try {
+        openImagePrepare(await webPlatform.files.decodeImage(file));
+      } catch (error) {
+        console.error("Image decode failed:", error);
+        alert(file.mimeType === "image/gif" ? t.home.alerts.gifReadFailed : t.home.alerts.fileReadFailed);
+        setInitialGridColorKeys(new Set());
       }
     }
   };
@@ -762,18 +681,6 @@ export default function HomePageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [originalImageSrc, granularity, similarityThreshold, customPaletteSelections, pixelationMode, remapTrigger]);
 
-  // 确保文件输入框引用在组件挂载后正确设置
-  useEffect(() => {
-    // 延迟执行，确保DOM完全渲染
-    const timer = setTimeout(() => {
-      if (!fileInputRef.current) {
-        console.warn("文件输入框引用在组件挂载后仍为null，这可能会导致上传功能异常");
-      }
-    }, 100);
-
-    return () => clearTimeout(timer);
-  }, []);
-
   // 设置组件挂载状态
   useEffect(() => {
     setIsMounted(true);
@@ -792,12 +699,12 @@ export default function HomePageClient() {
     let cancelled = false;
     const restore = async () => {
       try {
-        let projectDoc = restoreId === 'latest' ? undefined : await loadProject(restoreId);
+        let projectDoc = restoreId === 'latest' ? undefined : await webPlatform.persistence.loadProject(restoreId);
         if (!projectDoc) {
           // id 缺失/无效或 latest：回退到最近保存的项目
-          const summaries = await listProjects();
+          const summaries = await webPlatform.persistence.listProjects();
           if (summaries.length > 0) {
-            projectDoc = await loadProject(summaries[0].id);
+            projectDoc = await webPlatform.persistence.loadProject(summaries[0].id);
           }
         }
         if (!projectDoc || cancelled) return;
@@ -1016,7 +923,8 @@ export default function HomePageClient() {
 
   // 保存自定义色板并应用
   const handleSaveCustomPalette = () => {
-    savePaletteSelections(customPaletteSelections);
+    void webPlatform.persistence.savePaletteSelections(customPaletteSelections)
+      .catch((error) => console.error("Unable to save palette selections:", error));
     setIsCustomPalette(true);
     setIsCustomPaletteEditorOpen(false);
     // 触发图像重新处理
@@ -1047,26 +955,20 @@ export default function HomePageClient() {
       totalColors: selectedHexValues.length
     };
 
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'custom-perler-palette.json';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const artifact = webPlatform.artifacts.create(
+      new TextEncoder().encode(JSON.stringify(exportData, null, 2)),
+      "application/json",
+    );
+    void webPlatform.artifacts.save(artifact, "custom-perler-palette.json")
+      .finally(() => webPlatform.artifacts.release(artifact));
   };
 
   // ++ 新增：处理导入的色板文件 ++
-  const handleImportPaletteFile = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const handleImportPaletteFile = async () => {
+    const file = await webPlatform.files.select("palette");
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const content = e.target?.result as string;
+    try {
+        const content = await webPlatform.files.readText(file);
         const data = JSON.parse(content);
 
         // 检查文件格式
@@ -1110,29 +1012,15 @@ export default function HomePageClient() {
         setIsCustomPalette(true); // 标记为自定义
         alert(t.home.paletteTransfer.importSuccess(validHexValues.length));
 
-      } catch (error) {
-        console.error("导入色板配置失败:", error);
-        alert(t.home.paletteTransfer.importFailed(error instanceof Error ? error.message : t.home.common.unknownError));
-      } finally {
-        // 重置文件输入，以便可以再次导入相同的文件
-        if (event.target) {
-          event.target.value = '';
-        }
-      }
-    };
-    reader.onerror = () => {
-      alert(t.home.paletteTransfer.readFailed);
-       // 重置文件输入
-      if (event.target) {
-        event.target.value = '';
-      }
-    };
-    reader.readAsText(file);
+    } catch (error) {
+      console.error("导入色板配置失败:", error);
+      alert(t.home.paletteTransfer.importFailed(error instanceof Error ? error.message : t.home.common.unknownError));
+    }
   };
 
   // ++ 新增：触发导入文件选择 ++
   const triggerImportPalette = () => {
-    importPaletteInputRef.current?.click();
+    void handleImportPaletteFile();
   };
 
   // 生成完整色板数据（用户自定义色板中选中的所有颜色）
@@ -1220,13 +1108,6 @@ export default function HomePageClient() {
 
   return (
     <>
-    <input
-      type="file"
-      accept="image/jpeg, image/png, image/gif, .csv, text/csv, application/csv, text/plain"
-      onChange={handleFileChange}
-      ref={fileInputRef}
-      className="hidden"
-    />
     <canvas ref={originalCanvasRef} className="hidden" aria-hidden="true" />
     <canvas ref={pixelatedCanvasRef} className="hidden" aria-hidden="true" />
 
@@ -1254,7 +1135,7 @@ export default function HomePageClient() {
         }}
         onFileDrop={(file) => {
           setExcludedColorKeys(new Set());
-          processFile(file);
+          processFile(webPlatform.files.wrap(file));
         }}
       />
     ) : (
@@ -1265,13 +1146,6 @@ export default function HomePageClient() {
             {isCustomPaletteEditorOpen && (
               <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
                 <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-                   <input
-                    type="file"
-                    accept=".json"
-                    ref={importPaletteInputRef}
-                    onChange={handleImportPaletteFile}
-                    className="hidden"
-                  />
                   <div className="p-4 sm:p-6 flex-1 overflow-y-auto">
                     <CustomPaletteEditor
                       allColors={fullBeadPalette}
@@ -1344,13 +1218,6 @@ export default function HomePageClient() {
     {!isManualColoringMode && isCustomPaletteEditorOpen && (
       <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-          <input
-            type="file"
-            accept=".json"
-            ref={importPaletteInputRef}
-            onChange={handleImportPaletteFile}
-            className="hidden"
-          />
           <div className="p-4 sm:p-6 flex-1 overflow-y-auto">
             <CustomPaletteEditor
               allColors={fullBeadPalette}

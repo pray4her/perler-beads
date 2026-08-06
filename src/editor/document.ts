@@ -53,7 +53,9 @@ export function cloneEditorDocument(document: EditorDocumentV1): EditorDocumentV
     display: { ...document.display },
     preview: { ...document.preview },
     board: { ...document.board },
-    reference: document.reference ? { ...document.reference } : undefined,
+    reference: document.reference
+      ? { ...document.reference, data: document.reference.data?.slice() }
+      : undefined,
     inventory: { ...document.inventory },
     stamps: document.stamps.map((stamp) => ({ ...stamp, cells: stamp.cells.slice() })),
   };

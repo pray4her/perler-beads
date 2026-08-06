@@ -60,7 +60,7 @@ export interface EditorBoardSettings {
 }
 
 export interface EditorReference {
-  blob?: Blob;
+  data?: Uint8Array;
   fileName?: string;
   mimeType?: string;
   opacity: number;
@@ -175,6 +175,6 @@ export interface EditorProjectSummary {
   height: number;
   revision: number;
   updatedAt: number;
-  thumbnail?: Blob;
+  thumbnail?: Uint8Array;
   saveState: "saved" | "saving" | "recovered";
 }

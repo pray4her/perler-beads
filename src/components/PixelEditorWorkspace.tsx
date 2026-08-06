@@ -74,8 +74,8 @@ import {
   type FillMode,
   type FillScope,
 } from "@/editor/operations";
-import { downloadBlob, exportPerlerProject, importPerlerProject } from "@/editor/projectArchive";
-import { deleteProject, listProjects, loadProject, saveNamedSnapshot, saveProject, saveRecovery } from "@/editor/projectStorage";
+import { exportPerlerProject, importPerlerProject } from "@/editor/projectArchive";
+import { saveEditorCheckpoint } from "@/editor/platformUseCases";
 import { getColorMetrics, oklabDistance, uniquePaletteEntries } from "@/editor/palette";
 import {
   clampSelectionDelta,
@@ -106,6 +106,9 @@ import { canonicalFocusPath } from "@/i18n/site";
 import type { EditorTool, PaletteSortMode, RectangleMode } from "@/types/editorTypes";
 import { getColorKeyByHex, type ColorSystem } from "@/utils/colorSystemUtils";
 import { TRANSPARENT_KEY } from "@/utils/pixelEditingUtils";
+import { webPlatform } from "@/platform/web";
+
+const { deleteProject, listProjects, loadProject, saveNamedSnapshot, saveProject } = webPlatform.persistence;
 
 const ExportCenter = dynamic(
   () => import("@/components/ExportCenter").then((module) => module.ExportCenter),
@@ -243,10 +246,6 @@ function shiftedOutlinePoints(bounds: SelectionBounds, rowDelta: number, colDelt
     }
   }
   return points;
-}
-
-function downloadNamedBlob(blob: Blob, name: string) {
-  downloadBlob(blob, name);
 }
 
 /** Stock input that stays responsive locally and commits a single history entry on blur. */
@@ -441,8 +440,6 @@ function PixelEditorWorkspaceInner({
   const contentCanvasRef = useRef<HTMLCanvasElement>(null);
   const interactionCanvasRef = useRef<HTMLCanvasElement>(null);
   const minimapRef = useRef<HTMLCanvasElement>(null);
-  const projectInputRef = useRef<HTMLInputElement>(null);
-  const referenceInputRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<Camera>({ x: 72, y: 72, zoom: 1, previousZoom: 1 });
   const viewportSizeRef = useRef({ width: 800, height: 600 });
   const hoverRef = useRef<CellPoint | null>(null);
@@ -862,21 +859,21 @@ function PixelEditorWorkspaceInner({
   useEffect(() => drawEditor(), [cameraVersion, document, drawEditor, selection]);
 
   useEffect(() => {
-    const reference = document.reference?.blob;
+    const reference = document.reference?.data;
     referenceBitmapRef.current?.close();
     referenceBitmapRef.current = null;
-    if (!reference || typeof createImageBitmap === "undefined") {
+    if (!reference) {
       requestDraw();
       return;
     }
     let cancelled = false;
-    void createImageBitmap(reference).then((bitmap) => {
+    void webPlatform.files.decodeImageBytes(reference, document.reference?.mimeType ?? "application/octet-stream").then((bitmap) => {
       if (cancelled) return bitmap.close();
       referenceBitmapRef.current = bitmap;
       requestDraw();
     });
     return () => { cancelled = true; };
-  }, [document.reference?.blob, requestDraw]);
+  }, [document.reference?.data, document.reference?.mimeType, requestDraw]);
 
   useEffect(() => {
     setResizeWidth(document.width);
@@ -889,7 +886,7 @@ function PixelEditorWorkspaceInner({
     if (document.revision === 0) return;
     setSaveState("saving");
     const timer = window.setTimeout(() => {
-      void Promise.all([saveProject(document), saveRecovery(document)]).then(() => {
+      void saveEditorCheckpoint(webPlatform.persistence, document).then(() => {
         setSaveState("saved");
         return listProjects();
       }).then(setProjects).catch(() => setSaveState("recovered"));
@@ -1489,10 +1486,11 @@ function PixelEditorWorkspaceInner({
     });
   }, [currentColors, document.colorSystem, paletteColors, paletteSearch, paletteSort, paletteSource, selectedColor.color, sortAscending, usageMap]);
 
-  const importProjectFile = async (file?: File) => {
+  const importProjectFile = async () => {
+    const file = await webPlatform.files.select("project");
     if (!file) return;
     try {
-      const imported = await importPerlerProject(file);
+      const imported = await importPerlerProject(await webPlatform.files.readBytes(file));
       executeStructural(w.historyLabels.importProject(imported.name), imported);
       clearSelectionState();
       fitCanvas("canvas");
@@ -1537,7 +1535,28 @@ function PixelEditorWorkspaceInner({
   const exportStoredProject = async (projectId: string) => {
     const source = await loadProject(projectId);
     if (!source) return;
-    downloadNamedBlob(await exportPerlerProject(source), `${source.name}.perler`);
+    const artifact = webPlatform.artifacts.create(
+      await exportPerlerProject(source),
+      "application/x-perler-project",
+    );
+    try {
+      await webPlatform.artifacts.save(artifact, `${source.name}.perler`);
+    } finally {
+      webPlatform.artifacts.release(artifact);
+    }
+  };
+
+  const chooseReferenceFile = async () => {
+    const file = await webPlatform.files.select("reference");
+    if (!file) return;
+    const data = await webPlatform.files.readBytes(file);
+    updateDocumentSettings("reference", {
+      data,
+      fileName: file.name,
+      mimeType: file.mimeType,
+      opacity: .35,
+      mode: "overlay",
+    }, w.historyLabels.setReference);
   };
 
   const paletteButton = (entry: EditorPaletteEntry, prefix = "") => {
@@ -1813,9 +1832,9 @@ function PixelEditorWorkspaceInner({
               })}</div>
               <div><strong>{w.inspector.make.risksTitle}</strong><p>{activeWarnings.length ? w.inspector.make.risksFound(activeWarnings.length) : w.inspector.make.risksNone}</p></div>
               <div className="editor-warning-list">{activeWarnings.slice(0, 8).map((warning) => <button type="button" key={warning.id} onClick={() => { const index = warning.indices[0]; setActiveCell({ row: Math.floor(index / document.width), col: index % document.width }); setIgnoredWarnings((items) => new Set(items).add(warning.id)); }}>{warning.message}<small>{w.inspector.make.riskLocateIgnore}</small></button>)}</div>
-              <input ref={projectInputRef} className="sr-only" type="file" accept=".perler,application/x-perler-project" onChange={(event) => void importProjectFile(event.target.files?.[0])}/><Button variant="outline" onClick={() => projectInputRef.current?.click()}>{w.inspector.make.importPerler}</Button>
+              <Button variant="outline" onClick={() => void importProjectFile()}>{w.inspector.make.importPerler}</Button>
               <div><strong>{w.inspector.make.referenceTitle}</strong><p>{w.inspector.make.referenceDesc}</p></div>
-              <input ref={referenceInputRef} className="sr-only" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; updateDocumentSettings("reference", { blob: file, fileName: file.name, mimeType: file.type, opacity: .35, mode: "overlay" }, w.historyLabels.setReference); }}/><div className="editor-action-grid"><button type="button" onClick={() => referenceInputRef.current?.click()}>{w.inspector.make.chooseReference}</button><select className="editor-input" value={document.reference?.mode ?? "hidden"} onChange={(event) => updateDocumentSettings("reference", { ...document.reference, opacity: document.reference?.opacity ?? .35, mode: event.target.value as NonNullable<EditorDocumentV1["reference"]>["mode"] }, w.historyLabels.referenceMode)}><option value="hidden">{w.inspector.make.referenceHidden}</option><option value="original">{w.inspector.make.referenceOriginal}</option><option value="grid">{w.inspector.make.referenceGrid}</option><option value="overlay">{w.inspector.make.referenceOverlay}</option><option value="difference">{w.inspector.make.referenceDifference}</option></select></div>
+              <div className="editor-action-grid"><button type="button" onClick={() => void chooseReferenceFile()}>{w.inspector.make.chooseReference}</button><select className="editor-input" value={document.reference?.mode ?? "hidden"} onChange={(event) => updateDocumentSettings("reference", { ...document.reference, opacity: document.reference?.opacity ?? .35, mode: event.target.value as NonNullable<EditorDocumentV1["reference"]>["mode"] }, w.historyLabels.referenceMode)}><option value="hidden">{w.inspector.make.referenceHidden}</option><option value="original">{w.inspector.make.referenceOriginal}</option><option value="grid">{w.inspector.make.referenceGrid}</option><option value="overlay">{w.inspector.make.referenceOverlay}</option><option value="difference">{w.inspector.make.referenceDifference}</option></select></div>
               <div><strong>{w.inspector.make.projectsTitle}</strong><p>{w.inspector.make.projectsDesc}</p></div><div className="editor-project-list">{projects.map((project) => <div key={project.id}><button type="button" onClick={() => void loadProject(project.id).then((loaded) => { if (!loaded) return; executeStructural(w.historyLabels.openProject(loaded.name), loaded); clearSelectionState(); })}><strong>{project.name}</strong><small>{w.inspector.make.projectInfo(project.width, project.height, new Date(project.updatedAt).toLocaleString(dateTimeLocale))}</small></button><span className="editor-project-actions"><button type="button" aria-label={w.inspector.make.duplicateAriaLabel(project.name)} onClick={() => void duplicateStoredProject(project.id)}><Copy className="h-4 w-4" /></button><button type="button" aria-label={w.inspector.make.renameAriaLabel(project.name)} onClick={() => void renameStoredProject(project.id)}>{w.inspector.make.renameButton}</button><button type="button" aria-label={w.inspector.make.exportAriaLabel(project.name)} onClick={() => void exportStoredProject(project.id)}><Download className="h-4 w-4" /></button><button type="button" aria-label={w.inspector.make.deleteAriaLabel(project.name)} onClick={() => void deleteProject(project.id).then(() => listProjects()).then(setProjects)}><Trash2 className="h-4 w-4" /></button></span></div>)}</div>
             </div>}
 

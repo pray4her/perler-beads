@@ -90,8 +90,8 @@ if (!/progressMode === 'row'/.test(focusCanvas) || !/currentRow/.test(focusCanva
 if (!/handleToggleCurrentColorComplete/.test(focusPage) || !/onToggleComplete/.test(focusPage)) {
   failures.push('focus-complete-color: one-tap complete/reset of the current color must stay wired to ColorStatusBar');
 }
-const projectStorage = read('src/editor/projectStorage.ts');
-if (!/settings\?:\s*FocusProgressSettings/.test(projectStorage) || !/timer\?:\s*\{/.test(projectStorage)) {
+const focusProgressModel = read('src/editor/focusProgress.ts');
+if (!/settings\?:\s*FocusProgressSettings/.test(focusProgressModel) || !/timer\?:\s*\{/.test(focusProgressModel)) {
   failures.push('focus-persist: FocusProgressRecord must keep optional settings/timer fields (progress + settings + timer persistence)');
 }
 
@@ -108,11 +108,12 @@ for (const kind of ['display-png', 'product-png', 'production-png', 'production-
 if (!/buildProductionSheetModel/.test(exportCenter) || !/createPatternCsv/.test(exportCenter)) {
   failures.push('export-center: production and CSV exports must use canonical editor exporters');
 }
-const exportersSrc = read('src/editor/exporters.ts');
+const exportersSrc = read('src/platform/web/renderers.ts');
+const productionModelSrc = read('src/editor/productionModel.ts');
 if (/strokeRect\(x, y, cellSize, cellSize\)/.test(exportersSrc)) {
   failures.push('export-grid: production sheet must not stroke per-cell borders (double shared edges); use collapsed fillRect / pdf.line grid lines');
 }
-if (!/CHART_SYMBOLS/.test(exportersSrc) || !/symbolByKey/.test(exportersSrc)) {
+if (!/CHART_SYMBOLS/.test(productionModelSrc) || !/symbolByKey/.test(productionModelSrc)) {
   failures.push('export-symbol: black-and-white symbol chart style must stay wired into production exports');
 }
 // 文案已抽入 i18n 字典，预览开关的守卫落在字典与 chartStyle 接线上
@@ -299,7 +300,7 @@ for (const [, canonicalPath] of contentRoutes) {
 // --- 8) focus-mode location aids (crosshair / fine grid / board lines) ---
 const focusCanvasSrc = read('src/components/FocusCanvas.tsx');
 const focusPageSrc = read('src/components/FocusPageClient.tsx');
-const projectStorageSrc = read('src/editor/projectStorage.ts');
+const focusProgressSrc = read('src/editor/focusProgress.ts');
 
 // FocusCanvas must receive the selected cell and render the crosshair from it
 if (!/selectedCell/.test(focusCanvasSrc)) {
@@ -323,7 +324,7 @@ for (const prop of ['selectedCell=', 'boardInterval=', 'onCellSelect=', 'formatC
   }
 }
 // New settings must persist (optional fields for backward compatibility)
-if (!/boardInterval\?:\s*number/.test(projectStorageSrc) || !/showGridLines\?:\s*boolean/.test(projectStorageSrc)) {
+if (!/boardInterval\?:\s*number/.test(focusProgressSrc) || !/showGridLines\?:\s*boolean/.test(focusProgressSrc)) {
   failures.push('focus-location: FocusProgressSettings must persist showGridLines and boardInterval as optional fields');
 }
 
@@ -337,8 +338,40 @@ if (!/onExportProgress/.test(settingsPanelSrc) || !/onRequestResetProgress/.test
   failures.push('focus-ux: SettingsPanel export/reset progress buttons must be wired to handlers');
 }
 // Completion card must offer Web Share (with download fallback)
-if (!/navigator\.share/.test(completionCardSrc)) {
-  failures.push('focus-ux: CompletionCard must offer navigator.share for the completion card image');
+if (!/artifacts\.share/.test(completionCardSrc)) {
+  failures.push('focus-ux: CompletionCard must offer the Web adapter share extension for the completion card image');
+}
+
+// --- 10) platform capability boundary ---
+const platformRoot = path.join(root, 'src/platform/web');
+const sourceRoot = path.join(root, 'src');
+const forbiddenPlatformCapabilities = [
+  ['IndexedDB', /\b(?:indexedDB|openDB)\b/],
+  ['localStorage', /\blocalStorage\s*\./],
+  ['FileReader', /\bFileReader\b/],
+  ['createImageBitmap', /\bcreateImageBitmap\b/],
+  ['file input', /type\s*=\s*["']file["']/],
+  ['Object URL', /\bURL\.(?:createObjectURL|revokeObjectURL)\b/],
+  ['download anchor', /createElement\s*\(\s*["']a["']\s*\)/],
+  ['jsPDF', /["']jspdf["']/],
+  ['system clipboard', /\bnavigator\.clipboard\b/],
+];
+const sourceFiles = [];
+const collectSourceFiles = (directory) => {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) collectSourceFiles(absolute);
+    else if (/\.(?:ts|tsx)$/.test(entry.name) && !entry.name.endsWith('.test.ts')) sourceFiles.push(absolute);
+  }
+};
+collectSourceFiles(sourceRoot);
+for (const absolute of sourceFiles) {
+  if (absolute.startsWith(platformRoot + path.sep)) continue;
+  const source = fs.readFileSync(absolute, 'utf8');
+  const relative = path.relative(root, absolute).replaceAll('\\', '/');
+  for (const [capability, pattern] of forbiddenPlatformCapabilities) {
+    if (pattern.test(source)) failures.push(`platform-boundary: ${relative} directly uses ${capability}; route it through src/platform/web/`);
+  }
 }
 // Celebration must stay theme-token based and motion-safe
 if (/text-yellow-400|celebrationEmojis/.test(celebrationSrc)) {

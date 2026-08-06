@@ -24,23 +24,22 @@ import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   buildProductionSheetModel,
-  copyDisplayToClipboard,
-  createPatternCsv,
-  exportPatternPdf,
   type ExportKind,
   type ProductionChartStyle,
   type ProductionPaper,
   type ProductionSheetModel,
   PRODUCTION_CHART_STYLES,
   PRODUCTION_PAPERS,
-  renderDisplayPng,
-  renderProductPng,
-  renderProductionPng,
 } from "@/editor/exporters";
-import { downloadBlob, exportPerlerProject } from "@/editor/projectArchive";
+import { createPatternCsv } from "@/editor/patternCsv";
+import { createArtifactFileName } from "@/editor/artifactNaming";
+import { saveByteArtifact } from "@/editor/platformUseCases";
+import { exportPerlerProject } from "@/editor/projectArchive";
 import type { EditorDocumentV1 } from "@/editor/types";
 import { useT } from "@/i18n/context";
 import { cn } from "@/lib/utils";
+import type { ArtifactRef } from "@/platform/contracts";
+import { webPlatform } from "@/platform/web";
 
 type ExportCenterProps = {
   readonly document: EditorDocumentV1;
@@ -71,11 +70,6 @@ function useExportCenter(): ExportCenterContextValue {
   const context = useContext(ExportCenterContext);
   if (!context) throw new Error("ExportCenter 子组件必须在 ExportCenter 内使用");
   return context;
-}
-
-function fileName(document: EditorDocumentV1, suffix: string, fallbackBase: string): string {
-  const base = document.name.replace(/[\\/:*?"<>|]/g, "-").trim() || fallbackBase;
-  return `${base}-${suffix}`;
 }
 
 function isProductionPaper(value: string | undefined): value is ProductionPaper {
@@ -179,16 +173,16 @@ function ProductionPreview() {
   useEffect(() => {
     if (!open || !canExport) return;
     let cancelled = false;
-    let objectUrl: string | null = null;
+    let artifact: ArtifactRef | null = null;
     setGenerating(true);
-    renderProductionPng(document, { paper, chartStyle })
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
+    webPlatform.canvas.render(document, { kind: "production-png", options: { paper, chartStyle } })
+      .then((result) => {
+        artifact = result;
+        const url = webPlatform.artifacts.createPreviewUrl(result);
         if (cancelled) {
-          URL.revokeObjectURL(url);
+          webPlatform.artifacts.release(result);
           return;
         }
-        objectUrl = url;
         setPreviewUrl(url);
       })
       .catch(() => {
@@ -199,7 +193,7 @@ function ProductionPreview() {
       });
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (artifact) webPlatform.artifacts.release(artifact);
       setPreviewUrl(null);
     };
   }, [open, canExport, document, paper, chartStyle]);
@@ -391,33 +385,46 @@ export function ExportCenter({ document, open, onOpenChange, onOpenPreview }: Ex
       setMessage(null);
       setFailure(null);
       try {
+        const saveCanvas = async (
+          request: Parameters<typeof webPlatform.canvas.render>[1],
+          name: string,
+        ) => {
+          const artifact = await webPlatform.canvas.render(document, request);
+          try {
+            await webPlatform.artifacts.save(artifact, name);
+          } finally {
+            webPlatform.artifacts.release(artifact);
+          }
+        };
+        const saveBytes = (bytes: Uint8Array, mimeType: string, name: string) =>
+          saveByteArtifact(webPlatform.artifacts, bytes, mimeType, name);
         switch (kind) {
           case "display-png":
-            downloadBlob(await renderDisplayPng(document), fileName(document, t.workspace.export.suffixDisplayPng, t.workspace.export.defaultBaseName));
+            await saveCanvas({ kind: "display-png" }, createArtifactFileName(document.name, t.workspace.export.suffixDisplayPng, t.workspace.export.defaultBaseName));
             setMessage(t.workspace.export.msgDisplayPng);
             break;
           case "display-clipboard":
-            await copyDisplayToClipboard(document);
+            await webPlatform.clipboard.copyDisplay(document);
             setMessage(t.workspace.export.msgCopied);
             break;
           case "product-png":
-            downloadBlob(await renderProductPng(document), fileName(document, t.workspace.export.suffixProductPng, t.workspace.export.defaultBaseName));
+            await saveCanvas({ kind: "product-png" }, createArtifactFileName(document.name, t.workspace.export.suffixProductPng, t.workspace.export.defaultBaseName));
             setMessage(t.workspace.export.msgProductPng);
             break;
           case "production-png":
-            downloadBlob(await renderProductionPng(document, { paper, chartStyle }), fileName(document, t.workspace.export.suffixProductionPng(paper.toUpperCase()), t.workspace.export.defaultBaseName));
+            await saveCanvas({ kind: "production-png", options: { paper, chartStyle } }, createArtifactFileName(document.name, t.workspace.export.suffixProductionPng(paper.toUpperCase()), t.workspace.export.defaultBaseName));
             setMessage(t.workspace.export.msgProductionPng);
             break;
           case "production-pdf":
-            downloadBlob(await exportPatternPdf(document, { paper, chartStyle }), fileName(document, t.workspace.export.suffixProductionPdf(paper.toUpperCase()), t.workspace.export.defaultBaseName));
+            await saveCanvas({ kind: "pattern-pdf", options: { paper, chartStyle } }, createArtifactFileName(document.name, t.workspace.export.suffixProductionPdf(paper.toUpperCase()), t.workspace.export.defaultBaseName));
             setMessage(t.workspace.export.msgProductionPdf);
             break;
           case "pattern-csv":
-            downloadBlob(createPatternCsv(document), fileName(document, t.workspace.export.suffixCsv, t.workspace.export.defaultBaseName));
+            await saveBytes(new TextEncoder().encode(createPatternCsv(document)), "text/csv;charset=utf-8", createArtifactFileName(document.name, t.workspace.export.suffixCsv, t.workspace.export.defaultBaseName));
             setMessage(t.workspace.export.msgCsv);
             break;
           case "project":
-            downloadBlob(await exportPerlerProject(document), fileName(document, t.workspace.export.suffixProject, t.workspace.export.defaultBaseName));
+            await saveBytes(await exportPerlerProject(document), "application/x-perler-project", createArtifactFileName(document.name, t.workspace.export.suffixProject, t.workspace.export.defaultBaseName));
             setMessage(t.workspace.export.msgProject);
             break;
         }

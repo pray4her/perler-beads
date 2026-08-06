@@ -12,7 +12,7 @@ const green: MappedPixel = { key: "B01", color: "#E6EE31" };
 describe("export contracts", () => {
   it("round-trips v2 color-system CSV without exposing HEX values", async () => {
     const document = createEditorDocument([[yellow, blank], [green, yellow]], "MARD", "CSV 测试");
-    const result = parsePatternCsv(await createPatternCsv(document).text());
+    const result = parsePatternCsv(createPatternCsv(document));
 
     expect(result).toMatchObject({
       kind: "success",

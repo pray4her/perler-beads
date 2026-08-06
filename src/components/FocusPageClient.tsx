@@ -34,7 +34,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { createEditorDocument, editorDocumentToGrid } from '@/editor/document';
-import { loadFocusProgress, loadProject, saveFocusProgress, saveProject, hashEditorContent } from '@/editor/projectStorage';
+import { hashEditorContent } from '@/editor/focusProgress';
+import { migrateLegacyFocusProject } from '@/editor/platformUseCases';
+import { webPlatform } from '@/platform/web';
+
+const { loadFocusProgress, loadProject, saveFocusProgress } = webPlatform.persistence;
 
 /** Wake Lock 的最小类型声明，避免依赖较新的 lib.dom 定义 */
 type WakeLockNavigator = Navigator & {
@@ -339,14 +343,18 @@ export default function FocusPageClient() {
             return;
           }
         }
-        const savedPixelData = localStorage.getItem('focusMode_pixelData');
-        const savedColorSystem = (localStorage.getItem('focusMode_selectedColorSystem') || 'MARD') as ColorSystem;
-        if (!savedPixelData) throw new Error('No focus project found');
-        const pixelData = JSON.parse(savedPixelData) as MappedPixel[][];
-        const migrated = createEditorDocument(pixelData, savedColorSystem, t.focus.loading.migratedProjectName);
-        await saveProject(migrated);
+        const migrated = await migrateLegacyFocusProject(webPlatform.persistence, (legacy) => {
+          const colorSystem = (legacy.colorSystem || 'MARD') as ColorSystem;
+          return createEditorDocument(
+            JSON.parse(legacy.pixelData) as MappedPixel[][],
+            colorSystem,
+            t.focus.loading.migratedProjectName,
+          );
+        });
+        if (!migrated) throw new Error('No focus project found');
+        const pixelData = editorDocumentToGrid(migrated);
         window.history.replaceState(null, '', `${canonicalFocusPath(lang)}?project=${encodeURIComponent(migrated.id)}`);
-        await applyData(pixelData, savedColorSystem, { id: migrated.id, revision: migrated.revision, contentHash: hashEditorContent(migrated) });
+        await applyData(pixelData, migrated.colorSystem, { id: migrated.id, revision: migrated.revision, contentHash: hashEditorContent(migrated) });
       } catch (error) {
         console.error('Failed to load focus mode data:', error);
         window.location.href = canonicalHomePath(lang);
@@ -931,13 +939,14 @@ export default function FocusPageClient() {
       currentRow: focusState.currentRow,
       exportedAt: new Date().toISOString(),
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = t.focus.settings.exportFileName(new Date().toISOString().slice(0, 10));
-    link.click();
-    URL.revokeObjectURL(url);
+    const artifact = webPlatform.artifacts.create(
+      new TextEncoder().encode(JSON.stringify(payload, null, 2)),
+      "application/json",
+    );
+    void webPlatform.artifacts.save(
+      artifact,
+      t.focus.settings.exportFileName(new Date().toISOString().slice(0, 10)),
+    ).finally(() => webPlatform.artifacts.release(artifact));
   }, [focusProject, gridDimensions, focusState, t]);
 
   // 重置所有进度：清空标记与计时（保存 effect 会自动落盘）

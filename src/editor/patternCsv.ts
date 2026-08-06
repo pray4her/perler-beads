@@ -193,7 +193,7 @@ export function parsePatternCsv(source: string): PatternCsvImportResult {
   return parseLegacyHex(lines);
 }
 
-export function createPatternCsv(document: EditorDocumentV1): Blob {
+export function createPatternCsv(document: EditorDocumentV1): string {
   const metadata = [CSV_FORMAT, CSV_VERSION, document.colorSystem, String(document.width), String(document.height)];
   const rows = [CSV_HEADER.join(","), metadata.map(quoteCsvCell).join(","), "grid"];
   for (let row = 0; row < document.height; row += 1) {
@@ -205,5 +205,5 @@ export function createPatternCsv(document: EditorDocumentV1): Blob {
     }
     rows.push(values.map(quoteCsvCell).join(","));
   }
-  return new Blob(["\uFEFF", rows.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  return `\uFEFF${rows.join("\r\n")}`;
 }
