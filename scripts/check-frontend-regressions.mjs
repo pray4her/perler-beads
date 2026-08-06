@@ -12,6 +12,8 @@
  * 7. Content pages (ADR 0005) keep routes, canonicals, sitemap entries, screenshots, dictionaries and home links.
  * 8. Focus-mode location aids stay wired: selectedCell crosshair, ref-based hover, full-length fine grid lines,
  *    gated board outlines, and persisted showGridLines/boardInterval settings.
+ * 9. Focus-mode UX fixes stay wired: settings export/reset buttons have handlers, completion card can share,
+ *    celebration is theme-token based with reduced-motion support, and row-mode feedback is connected.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -323,6 +325,31 @@ for (const prop of ['selectedCell=', 'boardInterval=', 'onCellSelect=', 'formatC
 // New settings must persist (optional fields for backward compatibility)
 if (!/boardInterval\?:\s*number/.test(projectStorageSrc) || !/showGridLines\?:\s*boolean/.test(projectStorageSrc)) {
   failures.push('focus-location: FocusProgressSettings must persist showGridLines and boardInterval as optional fields');
+}
+
+// --- 9) focus-mode UX fixes (dead buttons / share / themed feedback) ---
+const settingsPanelSrc = read('src/components/SettingsPanel.tsx');
+const completionCardSrc = read('src/components/CompletionCard.tsx');
+const celebrationSrc = read('src/components/CelebrationAnimation.tsx');
+
+// Settings data-section buttons must not be dead (regression: rendered without onClick)
+if (!/onExportProgress/.test(settingsPanelSrc) || !/onRequestResetProgress/.test(settingsPanelSrc)) {
+  failures.push('focus-ux: SettingsPanel export/reset progress buttons must be wired to handlers');
+}
+// Completion card must offer Web Share (with download fallback)
+if (!/navigator\.share/.test(completionCardSrc)) {
+  failures.push('focus-ux: CompletionCard must offer navigator.share for the completion card image');
+}
+// Celebration must stay theme-token based and motion-safe
+if (/text-yellow-400|celebrationEmojis/.test(celebrationSrc)) {
+  failures.push('focus-ux: CelebrationAnimation must not use hardcoded yellow text or emoji particles; use theme tokens and bead squares');
+}
+if (!/prefers-reduced-motion/.test(celebrationSrc)) {
+  failures.push('focus-ux: CelebrationAnimation must respect prefers-reduced-motion');
+}
+// Row-mode completion feedback must be connected
+if (!/celebrationVariant/.test(focusPageSrc)) {
+  failures.push('focus-ux: FocusPageClient must drive celebration variants (color card vs row pill)');
 }
 
 // --- report ---

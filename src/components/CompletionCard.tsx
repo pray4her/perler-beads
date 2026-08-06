@@ -406,6 +406,31 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
     }
   };
 
+  // 分享打卡图（Web Share API）；用户取消不处理，其他失败回退到下载
+  const shareCard = async () => {
+    const cardDataURL = await generateCompletionCard();
+    if (!cardDataURL) return;
+    const fileName = t.focus.completion.cardFileName(new Date().toLocaleDateString());
+    try {
+      const blob = await (await fetch(cardDataURL)).blob();
+      const file = new File([blob], fileName, { type: 'image/jpeg' });
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: t.focus.completion.title });
+        return;
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+    }
+    // 不支持或分享失败：回退到下载
+    const link = document.createElement('a');
+    link.download = fileName;
+    link.href = cardDataURL;
+    link.click();
+  };
+
+  // 仅在支持 Web Share API 的环境显示分享按钮
+  const canShareCard = typeof navigator !== 'undefined' && 'canShare' in navigator;
+
   if (!isVisible) return null;
 
   return (
@@ -489,9 +514,21 @@ const CompletionCard: React.FC<CompletionCardProps> = ({
                 className="w-32 h-32 rounded-full mx-auto mb-4 object-cover"
               />
               <div className="space-y-3">
+                {canShareCard && (
+                  <button
+                    onClick={shareCard}
+                    className="w-full bg-primary text-primary-foreground py-3 rounded-lg hover:bg-primary/80 transition-colors"
+                  >
+                    {t.focus.completion.shareCard}
+                  </button>
+                )}
                 <button
                   onClick={downloadCard}
-                  className="w-full bg-primary text-primary-foreground py-3 rounded-lg hover:bg-primary/80 transition-colors"
+                  className={`w-full py-3 rounded-lg transition-colors ${
+                    canShareCard
+                      ? 'border border-border bg-background text-foreground hover:bg-muted'
+                      : 'bg-primary text-primary-foreground hover:bg-primary/80'
+                  }`}
                 >
                   {t.focus.completion.downloadCard}
                 </button>

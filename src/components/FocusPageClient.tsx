@@ -20,12 +20,21 @@ import ColorPanel from '@/components/ColorPanel';
 import SettingsPanel from '@/components/SettingsPanel';
 import CelebrationAnimation from '@/components/CelebrationAnimation';
 import CompletionCard from '@/components/CompletionCard';
+import FocusToast from '@/components/FocusToast';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
 import { useLanguage, useT } from '@/i18n/context';
 import { canonicalFocusPath, canonicalHomePath } from '@/i18n/site';
 import { ArrowLeft, Settings } from 'lucide-react';
 import { getColorKeyByHex, ColorSystem } from '@/utils/colorSystemUtils';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { createEditorDocument, editorDocumentToGrid } from '@/editor/document';
 import { loadFocusProgress, loadProject, saveFocusProgress, saveProject, hashEditorContent } from '@/editor/projectStorage';
 
@@ -64,6 +73,23 @@ const findFirstIncompleteRow = (pixelData: MappedPixel[][], completedCells: Set<
     }
   }
   return startRow;
+};
+
+/** 某一行中占比最多的豆色（用于逐行完成反馈的粒子主色） */
+const getDominantRowColor = (pixelData: MappedPixel[][], row: number): string | undefined => {
+  const counts = new Map<string, number>();
+  (pixelData[row] ?? []).forEach((cell) => {
+    if (!cell?.isExternal) counts.set(cell.color, (counts.get(cell.color) ?? 0) + 1);
+  });
+  let dominant: string | undefined;
+  let max = 0;
+  counts.forEach((count, color) => {
+    if (count > max) {
+      max = count;
+      dominant = color;
+    }
+  });
+  return dominant;
 };
 
 interface FocusModeState {
@@ -125,6 +151,24 @@ export default function FocusPageClient() {
   const flushSaveRef = React.useRef<(() => void) | null>(null);
   // 计时状态的最新快照（供持久化读取，避免把每秒 tick 纳入保存依赖）
   const timerSnapshotRef = React.useRef({ totalElapsedTime: 0, isPaused: false });
+
+  // 轻提示（1.6s 自动消失）、重置确认、图纸变更通知
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = React.useRef<number | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [progressResetNotice, setProgressResetNotice] = useState(false);
+  // 庆祝动画变体：逐色=中央卡片，逐行=顶部胶囊
+  const [celebrationVariant, setCelebrationVariant] = useState<'color' | 'row'>('color');
+  const [celebrationAccent, setCelebrationAccent] = useState<string | undefined>(undefined);
+  const [celebrationRowLabel, setCelebrationRowLabel] = useState<string | undefined>(undefined);
+  // 画布容器引用（定位时读取视口尺寸）
+  const canvasContainerRef = React.useRef<HTMLDivElement>(null);
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToastMessage(null), 1600);
+  }, []);
 
   // 专心模式状态
   const [focusState, setFocusState] = useState<FocusModeState>({
@@ -231,6 +275,10 @@ export default function FocusPageClient() {
           : new Set<string>();
         // 校验通过时一并恢复设置/计时/当前色/当前行（旧记录没有这些字段则保持默认）
         const restored = isValid ? progress : undefined;
+        // 图纸内容已变化导致非空旧进度被丢弃：明确告知，而不是静默从零开始
+        if (!isValid && progress && progress.completedCells.length > 0) {
+          setProgressResetNotice(true);
+        }
         const restoredRow = restored?.currentRow;
         const currentRow = restoredRow !== undefined && restoredRow >= 0 && restoredRow < dimensions.M
           ? restoredRow
@@ -530,6 +578,12 @@ export default function FocusPageClient() {
       progress => progress.completed >= progress.total
     );
 
+    // 逐色模式单色完成：庆祝粒子以刚完成的豆色为主色
+    if (colorJustCompleted && focusState.enableCelebration) {
+      setCelebrationVariant('color');
+      setCelebrationAccent(changedColor);
+    }
+
     setFocusState(prev => {
       const now = Date.now();
       let newState = {
@@ -563,13 +617,19 @@ export default function FocusPageClient() {
     });
 
     if (isRowMode) {
-      // 逐行模式：无单色庆祝；全部完成出打卡图，当前行完成自动推进
+      // 逐行模式：行完成出顶部胶囊反馈；全部完成出打卡图；当前行完成自动推进
       if (allColorsCompleted) {
         setFocusState(prev => ({ ...prev, showCompletionCard: true }));
       } else if (
         countRowCompleted(mappedPixelData, focusState.currentRow, newCompletedCells) >=
         countRowTotal(mappedPixelData, focusState.currentRow)
       ) {
+        if (focusState.enableCelebration) {
+          setCelebrationVariant('row');
+          setCelebrationAccent(getDominantRowColor(mappedPixelData, focusState.currentRow));
+          setCelebrationRowLabel(t.focus.celebration.rowTitle(focusState.currentRow + 1));
+          setFocusState(prev => ({ ...prev, showCelebration: true }));
+        }
         setFocusState(prev => ({
           ...prev,
           currentRow: findFirstIncompleteRow(
@@ -599,7 +659,7 @@ export default function FocusPageClient() {
         }
       }
     }
-  }, [mappedPixelData, focusState.progressMode, focusState.currentRow, focusState.colorProgress, focusState.enableCelebration, focusState.currentColor, colorTotals]);
+  }, [mappedPixelData, focusState.progressMode, focusState.currentRow, focusState.colorProgress, focusState.enableCelebration, focusState.currentColor, colorTotals, t]);
 
   // 点按即更新当前选中格（用于十字线/坐标读数），即使该次点击不构成标记
   const handleCellSelect = useCallback((row: number, col: number) => {
@@ -617,7 +677,12 @@ export default function FocusPageClient() {
     const cellColor = mappedPixelData[row][col].color;
     const isRowMode = focusState.progressMode === 'row';
 
-    if (!isRowMode && cellColor !== focusState.currentColor) return;
+    if (!isRowMode && cellColor !== focusState.currentColor) {
+      // 点了非当前色：不构成标记，给轻提示说明规则
+      const colorName = colorTotals.find(c => c.color === focusState.currentColor)?.name ?? focusState.currentColor;
+      showToast(t.focus.toast.wrongColor(colorName));
+      return;
+    }
 
     const targetColor = isRowMode ? cellColor : focusState.currentColor;
 
@@ -644,7 +709,7 @@ export default function FocusPageClient() {
     }
 
     commitCompletedCells(newCompletedCells, targetColor, { row, col });
-  }, [mappedPixelData, focusState.progressMode, focusState.currentColor, focusState.completedCells, commitCompletedCells]);
+  }, [mappedPixelData, focusState.progressMode, focusState.currentColor, focusState.completedCells, commitCompletedCells, colorTotals, showToast, t]);
 
   // 一键完成/撤销当前颜色（逐色模式）：整色标记或整色取消
   const handleToggleCurrentColorComplete = useCallback(() => {
@@ -698,45 +763,77 @@ export default function FocusPageClient() {
   }, [gridDimensions]);
 
   // 处理定位到推荐位置（逐行模式定位当前行）
+  // 区域在视口内放不下时回落缩放；偏移量做钳制，保证图纸至少 25% 留在视口内
   const handleLocateRecommended = useCallback(() => {
-    if (!gridDimensions) return;
+    if (!gridDimensions || !mappedPixelData) return;
 
-    const target = focusState.progressMode === 'row'
+    const isRow = focusState.progressMode === 'row';
+    const region = isRow
+      ? (mappedPixelData[focusState.currentRow] ?? []).map((_, col) => ({ row: focusState.currentRow, col }))
+      : focusState.recommendedRegion;
+    const fallbackCell = isRow
       ? { row: focusState.currentRow, col: Math.floor(gridDimensions.N / 2) }
       : focusState.recommendedCell;
-    if (!target) return;
+    const cells = region && region.length > 0 ? region : fallbackCell ? [fallbackCell] : null;
+    if (!cells) {
+      showToast(t.focus.toast.noTarget);
+      return;
+    }
 
-    const { row, col } = target;
+    // 目标区域的包围盒
+    let minRow = Infinity, maxRow = -Infinity, minCol = Infinity, maxCol = -Infinity;
+    cells.forEach(({ row, col }) => {
+      minRow = Math.min(minRow, row);
+      maxRow = Math.max(maxRow, row);
+      minCol = Math.min(minCol, col);
+      maxCol = Math.max(maxCol, col);
+    });
 
-    // 计算格子大小（与FocusCanvas中的计算保持一致）
+    // 与 FocusCanvas 一致的尺寸计算（含坐标标尺边距）
     const cellSize = Math.max(15, Math.min(40, 300 / Math.max(gridDimensions.N, gridDimensions.M)));
+    const coordLeft = focusState.showCoordinates ? 18 : 0;
+    const coordTop = focusState.showCoordinates ? 14 : 0;
+    const canvasWidth = coordLeft + gridDimensions.N * cellSize;
+    const canvasHeight = coordTop + gridDimensions.M * cellSize;
 
-    // 计算目标格子在画布上的中心位置（像素坐标）
-    const targetX = (col + 0.5) * cellSize;
-    const targetY = (row + 0.5) * cellSize;
+    const container = canvasContainerRef.current;
+    const viewWidth = container?.clientWidth ?? 0;
+    const viewHeight = container?.clientHeight ?? 0;
 
-    // 计算画布总尺寸
-    const canvasWidth = gridDimensions.N * cellSize;
-    const canvasHeight = gridDimensions.M * cellSize;
+    // 区域超过视口 70% 时回落缩放（只缩不放），保证定位后整个区域可见
+    let scale = focusState.canvasScale;
+    if (viewWidth > 0 && viewHeight > 0) {
+      const regionWidth = (maxCol - minCol + 1) * cellSize;
+      const regionHeight = (maxRow - minRow + 1) * cellSize;
+      const fitScale = Math.min((viewWidth * 0.7) / regionWidth, (viewHeight * 0.7) / regionHeight);
+      if (fitScale < scale) {
+        scale = Math.max(0.3, fitScale);
+      }
+    }
 
-    // 简单的定位逻辑：
-    // 1. 将目标位置移到画布的中心位置
-    // 2. 考虑缩放的影响
+    // 目标区域中心（未缩放画布坐标）；CSS transform 为 scale 后 translate，故偏移与缩放无关
+    const targetX = ((minCol + maxCol + 1) / 2) * cellSize;
+    const targetY = ((minRow + maxRow + 1) / 2) * cellSize;
+    let offsetX = canvasWidth / 2 - targetX;
+    let offsetY = canvasHeight / 2 - targetY;
 
-    // 画布中心位置
-    const canvasCenterX = canvasWidth / 2;
-    const canvasCenterY = canvasHeight / 2;
+    // 钳制：图纸任何方向不得被拖出视口超过 75%
+    if (viewWidth > 0 && viewHeight > 0) {
+      const clampOffset = (offset: number, canvasSize: number, viewSize: number) => {
+        const minOffset = -viewSize / (2 * scale) - canvasSize * 0.25;
+        const maxOffset = viewSize / (2 * scale) + canvasSize * 0.25;
+        return Math.min(maxOffset, Math.max(minOffset, offset));
+      };
+      offsetX = clampOffset(offsetX, canvasWidth, viewWidth);
+      offsetY = clampOffset(offsetY, canvasHeight, viewHeight);
+    }
 
-    // 计算从目标位置到画布中心的偏移量
-    const offsetX = canvasCenterX - targetX;
-    const offsetY = canvasCenterY - targetY;
-
-    // 更新状态
     setFocusState(prev => ({
       ...prev,
+      canvasScale: scale,
       canvasOffset: { x: offsetX, y: offsetY }
     }));
-  }, [focusState.progressMode, focusState.currentRow, focusState.recommendedCell, gridDimensions]);
+  }, [focusState.progressMode, focusState.currentRow, focusState.recommendedCell, focusState.recommendedRegion, focusState.canvasScale, focusState.showCoordinates, gridDimensions, mappedPixelData, showToast, t]);
 
   // 格式化时间显示
   const formatTime = useCallback((seconds: number): string => {
@@ -773,6 +870,63 @@ export default function FocusPageClient() {
         };
       }
     });
+  }, []);
+
+  // 导出进度数据（JSON 备份，与 IndexedDB 持久化的载荷一致）
+  const handleExportProgress = useCallback(() => {
+    if (!focusProject || !gridDimensions) return;
+    const payload = {
+      projectId: focusProject.id,
+      revision: focusProject.revision,
+      contentHash: focusProject.contentHash,
+      completedCells: Array.from(focusState.completedCells).map((key) => {
+        const [row, col] = key.split(',').map(Number);
+        return row * gridDimensions.N + col;
+      }),
+      settings: {
+        guidanceMode: focusState.guidanceMode,
+        gridSectionInterval: focusState.gridSectionInterval,
+        showSectionLines: focusState.showSectionLines,
+        sectionLineColor: focusState.sectionLineColor,
+        enableCelebration: focusState.enableCelebration,
+        progressMode: focusState.progressMode,
+        showCoordinates: focusState.showCoordinates,
+        wakeLockEnabled: focusState.wakeLockEnabled,
+        showGridLines: focusState.showGridLines,
+        boardInterval: focusState.boardInterval,
+      },
+      timer: timerSnapshotRef.current,
+      currentColor: focusState.currentColor,
+      currentRow: focusState.currentRow,
+      exportedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = t.focus.settings.exportFileName(new Date().toISOString().slice(0, 10));
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [focusProject, gridDimensions, focusState, t]);
+
+  // 重置所有进度：清空标记与计时（保存 effect 会自动落盘）
+  const handleResetProgress = useCallback(() => {
+    setShowResetConfirm(false);
+    setFocusState(prev => ({
+      ...prev,
+      completedCells: new Set<string>(),
+      colorProgress: Object.fromEntries(
+        Object.entries(prev.colorProgress).map(([color, progress]) => [color, { ...progress, completed: 0 }])
+      ),
+      selectedCell: null,
+      currentRow: 0,
+      totalElapsedTime: 0,
+      lastResumeTime: Date.now(),
+      isPaused: false,
+      completionPaused: false,
+      showCelebration: false,
+      showCompletionCard: false,
+    }));
   }, []);
 
   // 桌面端键盘快捷键（面板打开或焦点在输入控件时忽略）
@@ -812,6 +966,9 @@ export default function FocusPageClient() {
   const handleCelebrationComplete = useCallback(() => {
     setFocusState(prev => ({ ...prev, showCelebration: false }));
 
+    // 逐行反馈仅关闭动画；行推进在标记时已完成
+    if (celebrationVariant === 'row') return;
+
     // 检查是否所有颜色都完成了
     const allCompleted = availableColors.every(color => color.completed >= color.total);
 
@@ -835,7 +992,7 @@ export default function FocusPageClient() {
         }
       }
     }
-  }, [availableColors, focusState.currentColor]);
+  }, [availableColors, focusState.currentColor, celebrationVariant]);
 
   // 处理打卡图关闭
   const handleCompletionCardClose = useCallback(() => {
@@ -869,7 +1026,7 @@ export default function FocusPageClient() {
     : t.focus.progress.rowRemaining(focusState.currentRow + 1, currentRowTotal - currentRowCompleted);
 
   return (
-    <div className="h-[100dvh] min-h-[100dvh] flex flex-col bg-background">
+    <div className="relative h-[100dvh] min-h-[100dvh] flex flex-col bg-background">
       <div className="w-full max-w-3xl mx-auto flex flex-col flex-1 min-h-0">
         {/* 顶部导航栏 */}
         <header className="min-h-16 bg-card border-b border-border px-3 sm:px-5 py-2 flex items-center justify-between text-foreground">
@@ -903,6 +1060,21 @@ export default function FocusPageClient() {
           </Button>
         </header>
 
+        {/* 图纸变更导致进度重置的提示 */}
+        {progressResetNotice && (
+          <div className="mx-3 sm:mx-5 mt-2 flex items-center justify-between gap-2 bg-secondary border border-border rounded-lg px-3 py-2">
+            <p className="text-sm text-secondary-foreground">{t.focus.notice.progressReset}</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setProgressResetNotice(false)}
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+            >
+              {t.focus.notice.dismiss}
+            </Button>
+          </div>
+        )}
+
         {/* 推进方式切换 */}
         <ModeBar
           progressMode={focusState.progressMode}
@@ -930,7 +1102,7 @@ export default function FocusPageClient() {
         )}
 
         {/* 主画布区域 */}
-        <div className="flex-1 relative overflow-hidden">
+        <div ref={canvasContainerRef} className="flex-1 relative overflow-hidden">
           <FocusCanvas
             mappedPixelData={mappedPixelData}
             gridDimensions={gridDimensions}
@@ -1004,14 +1176,43 @@ export default function FocusPageClient() {
         onBoardIntervalChange={(interval: number) => setFocusState(prev => ({ ...prev, boardInterval: interval }))}
         wakeLockEnabled={focusState.wakeLockEnabled}
         onWakeLockEnabledChange={(enable: boolean) => setFocusState(prev => ({ ...prev, wakeLockEnabled: enable }))}
+        onExportProgress={handleExportProgress}
+        onRequestResetProgress={() => setShowResetConfirm(true)}
         onClose={() => setFocusState(prev => ({ ...prev, showSettingsPanel: false }))}
       />
 
-      {/* 庆祝动画 */}
+      {/* 庆祝动画（逐色=中央卡片 / 逐行=顶部胶囊） */}
       <CelebrationAnimation
         isVisible={focusState.showCelebration}
+        variant={celebrationVariant}
+        accentColor={celebrationAccent}
+        rowLabel={celebrationRowLabel}
         onComplete={handleCelebrationComplete}
       />
+
+      {/* 轻提示 */}
+      <FocusToast message={toastMessage} />
+
+      {/* 重置进度确认 */}
+      <Dialog open={showResetConfirm} onOpenChange={setShowResetConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.focus.settings.resetConfirmTitle}</DialogTitle>
+            <DialogDescription>{t.focus.settings.resetConfirmDesc}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowResetConfirm(false)}>
+              {t.focus.settings.cancel}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleResetProgress}
+            >
+              {t.focus.settings.resetConfirmAction}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 完成打卡图 */}
       <CompletionCard

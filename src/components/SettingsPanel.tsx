@@ -29,6 +29,8 @@ interface SettingsPanelProps {
   onBoardIntervalChange: (interval: number) => void;
   wakeLockEnabled: boolean;
   onWakeLockEnabledChange: (enable: boolean) => void;
+  onExportProgress: () => void;
+  onRequestResetProgress: () => void;
   onClose: () => void;
 }
 
@@ -52,6 +54,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onBoardIntervalChange,
   wakeLockEnabled,
   onWakeLockEnabledChange,
+  onExportProgress,
+  onRequestResetProgress,
   onClose
 }) => {
   const t = useT();
@@ -267,10 +271,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <div>
             <h3 className="text-base font-medium text-foreground mb-3">{t.focus.settings.dataTitle}</h3>
             <div className="space-y-3">
-              <Button variant="outline" className="w-full">
+              <Button variant="outline" className="w-full" onClick={onExportProgress}>
                 {t.focus.settings.exportProgress}
               </Button>
-              <Button variant="outline" className="w-full">
+              <Button
+                variant="outline"
+                className="w-full text-destructive hover:text-destructive"
+                onClick={onRequestResetProgress}
+              >
                 {t.focus.settings.resetProgress}
               </Button>
             </div>
